@@ -1,0 +1,18 @@
+/* Global styles */
+:root {
+  --color-bg: #111;
+  --color-fg: #fff;
+  --color-primary: #00aaff;
+  --color-secondary: #ff6600;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
