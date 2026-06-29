@@ -27,7 +27,9 @@ jobs:
         run: npm run test
 
       - name: Build
-        run: npm run build
+        run: |
+          npm run build
+          cp .nojekyll dist/.nojekyll
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
