@@ -13,6 +13,10 @@ export default ts.config(
       parserOptions: {
         parser: ts.parser,
         extraFileExtensions: ['.svelte']
+      },
+      globals: {
+        HTMLCanvasElement: 'readonly',
+        HTMLImageElement: 'readonly',
       }
     }
   },
