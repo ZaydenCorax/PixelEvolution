@@ -6,12 +6,14 @@ export interface GameStore {
   state: GameState;
   paused: boolean;
   speedMultiplier: number;
+  gameOver: boolean;
+  gameOverReason: string | undefined;
   togglePause(): void;
   setSpeed(multiplier: number): void;
   expand(): void;
   start(): void;
   stop(): void;
-  reset(): void;
+  startNewGame(): void;
   subscribe(fn: () => void): () => void;
 }
 
@@ -44,6 +46,12 @@ export function createGameStore(canvas: HTMLCanvasElement): GameStore {
     get speedMultiplier() {
       return state.speedMultiplier;
     },
+    get gameOver() {
+      return state.gameOver;
+    },
+    get gameOverReason() {
+      return state.gameOverReason;
+    },
     togglePause(): void {
       state.paused = !state.paused;
       if (state.paused) {
@@ -69,12 +77,13 @@ export function createGameStore(canvas: HTMLCanvasElement): GameStore {
     stop(): void {
       simLoop.stop();
     },
-    reset(): void {
+    startNewGame(): void {
       simLoop.stop();
       state = createInitialState();
       renderer.resize(state.world.w, state.world.h);
       renderer.draw(state.world, state.ants);
       notify();
+      simLoop.start();
     },
     subscribe(fn: () => void): () => void {
       listeners.add(fn);

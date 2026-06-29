@@ -23,11 +23,14 @@ export function createInitialState(seed: number = Date.now()): GameState {
     gridTier: 0,
     paused: false,
     speedMultiplier: 1,
+    gameOver: false,
+    gameOverReason: undefined,
   };
 }
 
 export function tick(state: GameState): void {
   if (state.paused) return;
+  if (state.gameOver) return;
 
   const rng = mulberry32(state.seed + state.tick * 1000);
 
@@ -42,8 +45,12 @@ export function tick(state: GameState): void {
   if (state.tick % 10 === 0) {
     const foodProduced = collectFoodAtNest(state);
     state.resources.food += foodProduced;
-    state.resources.food += foodProduced;
     state.stats.totalFood += foodProduced;
+  }
+
+  if (state.ants.count === 0 && state.stats.totalAnts > 0) {
+    state.gameOver = true;
+    state.gameOverReason = 'Colony collapsed';
   }
 }
 

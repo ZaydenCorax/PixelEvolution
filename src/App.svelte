@@ -5,62 +5,103 @@
   let canvas: HTMLCanvasElement | null = null;
   let store = $state<ReturnType<typeof createGameStore> | null>(null);
 
+  let screen = $state<'menu' | 'playing' | 'gameover'>('menu');
+
   onMount(() => {
-    const s = createGameStore(canvas!);
-    store = s;
-    s.start();
-    return () => s.stop();
+    if (canvas) {
+      store = createGameStore(canvas);
+      store.startNewGame();
+      store.stop();
+    }
+    return () => store?.stop();
   });
 
-  let paused = $derived(store?.paused ?? false);
+  $effect(() => {
+    if (store?.gameOver && screen === 'playing') {
+      screen = 'gameover';
+    }
+  });
+
   let food = $derived(store?.state.resources.food ?? 0);
   let population = $derived(store?.state.ants.count ?? 0);
   let tick = $derived(store?.state.tick ?? 0);
+  let score = $derived(store?.state.stats.totalFood ?? 0);
+  let gameOverReason = $derived(store?.gameOverReason ?? '');
+  let paused = $derived(store?.paused ?? false);
 
-  onMount(() => {
-    store!.start();
-    return () => store!.stop();
-  });
+  function startGame() {
+    if (!store) return;
+    store.startNewGame();
+    screen = 'playing';
+  }
 
   function togglePause() {
-    store!.togglePause();
+    store?.togglePause();
   }
 
-  function setSpeed1() { store!.setSpeed(0.5); }
-  function setSpeed2() { store!.setSpeed(1); }
-  function setSpeed3() { store!.setSpeed(2); }
-  function setSpeed4() { store!.setSpeed(4); }
-  function expand() {
-    store!.expand();
+  function setSpeed(multiplier: number) {
+    store?.setSpeed(multiplier);
   }
-  function reset() {
-    store!.reset();
+
+  function expand() {
+    store?.expand();
   }
 </script>
 
-<div class="app">
-  <header class="hud">
-    <div class="hud-left">
-      <h1 class="title">PixelEvolution</h1>
+<div class="app" class:playing={screen === 'playing'}>
+  <canvas bind:this={canvas} class="world-canvas"></canvas>
+
+  {#if screen === 'menu'}
+    <div class="overlay menu">
+      <div class="menu-content">
+        <h1 class="game-title">PixelEvolution</h1>
+        <p class="game-subtitle">Manage your pixel ant colony</p>
+        <div class="instructions">
+          <p>Gather food, grow your colony, and survive.</p>
+          <p>Watch your ants forage, leave pheromone trails, and bring food back to the nest.</p>
+        </div>
+        <button class="btn start-btn" onclick={startGame}>Start</button>
+      </div>
     </div>
-    <div class="hud-center">
-      <span class="stat">Food: {Math.floor(food)}</span>
-      <span class="stat">Ants: {population}</span>
-      <span class="stat">Tick: {tick}</span>
+  {:else if screen === 'playing'}
+    <header class="hud">
+      <div class="hud-left">
+        <h1 class="title">PixelEvolution</h1>
+      </div>
+      <div class="hud-center">
+        <span class="stat">Score: {Math.floor(score)}</span>
+        <span class="stat">Colony Health: {population}</span>
+        <span class="stat">Food: {Math.floor(food)}</span>
+        <span class="stat">Tick: {tick}</span>
+      </div>
+      <div class="hud-right">
+        <button class="btn" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</button>
+        <button class="btn" onclick={() => setSpeed(0.5)}>0.5x</button>
+        <button class="btn" onclick={() => setSpeed(1)}>1x</button>
+        <button class="btn" onclick={() => setSpeed(2)}>2x</button>
+        <button class="btn" onclick={() => setSpeed(4)}>4x</button>
+        <button class="btn accent" onclick={expand}>Expand</button>
+      </div>
+    </header>
+  {:else}
+    <div class="overlay game-over">
+      <div class="game-over-content">
+        <h1 class="game-over-title">Game Over</h1>
+        <p class="game-over-reason">{gameOverReason}</p>
+        <div class="final-stats">
+          <div class="stat-row">
+            <span>Final Score:</span>
+            <span class="stat-value">{Math.floor(score)}</span>
+          </div>
+          <div class="stat-row">
+            <span>Colony Survived:</span>
+            <span class="stat-value">{tick} ticks</span>
+          </div>
+        </div>
+        <button class="btn start-btn" onclick={startGame}>Play Again</button>
+      </div>
     </div>
-    <div class="hud-right">
-      <button class="btn" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</button>
-      <button class="btn" onclick={setSpeed1}>0.5x</button>
-      <button class="btn" onclick={setSpeed2}>1x</button>
-      <button class="btn" onclick={setSpeed3}>2x</button>
-      <button class="btn" onclick={setSpeed4}>4x</button>
-      <button class="btn accent" onclick={expand}>Expand</button>
-      <button class="btn danger" onclick={reset}>Reset</button>
-    </div>
-  </header>
-  <main class="main">
-    <canvas bind:this={canvas} class="world-canvas"></canvas>
-  </main>
+  {/if}
 </div>
 
 <style>
@@ -71,6 +112,84 @@
     font-family: system-ui, sans-serif;
     color: #e0e0e0;
     background: #111;
+    position: relative;
+  }
+
+  .world-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    background: #222;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .playing .world-canvas {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+  }
+
+  .menu {
+    background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+  }
+
+  .menu-content {
+    text-align: center;
+    padding: 2rem;
+  }
+
+  .game-title {
+    font-size: 3rem;
+    margin: 0 0 0.5rem 0;
+    color: #fff;
+    text-shadow: 0 0 20px rgba(0, 170, 255, 0.5);
+  }
+
+  .game-subtitle {
+    font-size: 1.2rem;
+    color: #aaa;
+    margin: 0 0 2rem 0;
+  }
+
+  .instructions {
+    margin-bottom: 2rem;
+    color: #ccc;
+    line-height: 1.6;
+  }
+
+  .instructions p {
+    margin: 0.5rem 0;
+  }
+
+  .start-btn {
+    padding: 0.8rem 2.5rem;
+    font-size: 1.2rem;
+    background: #2a6;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .start-btn:hover {
+    background: #3b7;
   }
 
   .hud {
@@ -82,6 +201,8 @@
     border-bottom: 1px solid #333;
     flex-wrap: wrap;
     gap: 0.5rem;
+    position: relative;
+    z-index: 5;
   }
 
   .hud-left {
@@ -134,28 +255,43 @@
     background: #3b7;
   }
 
-  .btn.danger {
-    background: #a22;
-    border-color: #c33;
+  .game-over {
+    background: rgba(0, 0, 0, 0.85);
   }
 
-  .btn.danger:hover {
-    background: #c33;
+  .game-over-content {
+    text-align: center;
+    padding: 2rem;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 12px;
+    max-width: 400px;
   }
 
-  .main {
-    flex: 1;
+  .game-over-title {
+    font-size: 2.5rem;
+    margin: 0 0 1rem 0;
+    color: #ff4444;
+  }
+
+  .game-over-reason {
+    color: #aaa;
+    margin-bottom: 1.5rem;
+  }
+
+  .final-stats {
+    margin-bottom: 2rem;
+  }
+
+  .stat-row {
     display: flex;
-    justify-content: center;
-    align-items: center;
-    background: #111;
-    overflow: hidden;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #333;
   }
 
-  .world-canvas {
-    image-rendering: pixelated;
-    background: #222;
-    max-width: 100%;
-    max-height: 100%;
+  .stat-value {
+    color: #fff;
+    font-weight: bold;
   }
 </style>

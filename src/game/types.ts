@@ -50,6 +50,8 @@ export interface GameState {
   gridTier: number;
   paused: boolean;
   speedMultiplier: number;
+  gameOver: boolean;
+  gameOverReason?: string;
 }
 
 export interface SaveV1 {
