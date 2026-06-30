@@ -1,26 +1,20 @@
 import { GameState } from './types';
-import { createWorld, expandWorld, tickPheromones, spawnFoodTick } from './world';
+import { createWorld, tickPheromones, spawnFoodTick } from './world';
 import { createAnts, stepAnts } from './ant';
 import { mulberry32 } from './rng';
-import { GRID_TIERS, STARTING_ANTS, TICK_INTERVAL_MS } from './constants';
+import { STARTING_ANTS, TICK_INTERVAL_MS, TERRAIN } from './constants';
 
 export function createInitialState(seed: number = Date.now()): GameState {
-  const world = createWorld(0, seed);
+  const world = createWorld(seed);
   const rng = mulberry32(seed);
   const ants = createAnts(STARTING_ANTS, world, rng);
 
   return {
     seed,
     tick: 0,
-    resources: { food: 0, evo: 0 },
+    resources: { food: 0 },
     world,
     ants,
-    stats: {
-      totalFood: 0,
-      totalAnts: ants.count,
-      totalTicks: 0,
-    },
-    gridTier: 0,
     paused: false,
     gameOver: false,
     gameOverReason: undefined,
@@ -38,24 +32,21 @@ export function tick(state: GameState): void {
   spawnFoodTick(state.world, rng);
 
   state.tick++;
-  state.stats.totalTicks = state.tick;
-  state.stats.totalAnts = state.ants.count;
 
   if (state.tick % 10 === 0) {
     const foodProduced = collectFoodAtNest(state);
     state.resources.food += foodProduced;
-    state.stats.totalFood += foodProduced;
   }
 
-  if (state.ants.count === 0 && state.stats.totalAnts > 0) {
+  if (state.ants.count === 0) {
     state.gameOver = true;
     state.gameOverReason = 'Colony collapsed';
   }
 }
 
 function collectFoodAtNest(state: GameState): number {
-  const cx = Math.floor(state.world.w / 2);
-  const cy = Math.floor(state.world.h / 2);
+  const cx = 16;
+  const cy = 16;
   let collected = 0;
 
   for (let dy = -2; dy <= 2; dy++) {
@@ -64,7 +55,8 @@ function collectFoodAtNest(state: GameState): number {
       const ny = cy + dy;
       if (nx < 0 || nx >= state.world.w || ny < 0 || ny >= state.world.h) continue;
       const nIdx = ny * state.world.w + nx;
-      if (state.world.terrain[nIdx] === 2 && state.world.food[nIdx] > 0) {
+      if (state.world.terrain[nIdx] !== TERRAIN.NEST) continue;
+      if (state.world.food[nIdx] > 0) {
         collected += state.world.food[nIdx];
         state.world.food[nIdx] = 0;
       }
@@ -72,15 +64,6 @@ function collectFoodAtNest(state: GameState): number {
   }
 
   return collected;
-}
-
-export function expandGrid(state: GameState): boolean {
-  const nextTier = state.gridTier + 1;
-  if (nextTier >= GRID_TIERS.length) return false;
-
-  state.world = expandWorld(state.world, nextTier, state.seed + state.tick);
-  state.gridTier = nextTier;
-  return true;
 }
 
 export interface SimLoop {

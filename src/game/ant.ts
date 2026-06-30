@@ -5,7 +5,6 @@ import {
   ANT_ENERGY_COST,
   ANT_INITIAL_ENERGY,
   ANT_LIFESPAN,
-  MAX_POPULATION,
 } from './constants';
 import type { Ants, World as WorldType } from './types';
 import {
@@ -18,13 +17,12 @@ import {
 import { randInt, randChoice, mulberry32 } from './rng';
 
 export function createAnts(count: number, world: WorldType, rng: () => number): Ants {
-  const capacity = MAX_POPULATION;
-  const x = new Int16Array(capacity);
-  const y = new Int16Array(capacity);
-  const dir = new Uint8Array(capacity);
-  const state = new Uint8Array(capacity);
-  const energy = new Float32Array(capacity);
-  const age = new Uint32Array(capacity);
+  const x = new Int16Array(count);
+  const y = new Int16Array(count);
+  const dir = new Uint8Array(count);
+  const state = new Uint8Array(count);
+  const energy = new Float32Array(count);
+  const age = new Uint32Array(count);
 
   const cx = Math.floor(world.w / 2);
   const cy = Math.floor(world.h / 2);
@@ -38,7 +36,7 @@ export function createAnts(count: number, world: WorldType, rng: () => number): 
     age[i] = 0;
   }
 
-  return { count, capacity, x, y, dir, state, energy, age };
+  return { count, x, y, dir, state, energy, age };
 }
 
 export function stepAnts(
@@ -157,18 +155,12 @@ function getWeightedDirs(
       weights[d] = -1;
       continue;
     }
-    const idx = getCellIndex(world, nx, ny);
-    const terrain = world.terrain[idx];
-
-    if (terrain === TERRAIN.WALL) {
-      weights[d] = -1;
-      continue;
-    }
 
     valid.push(d);
 
+    const idx = getCellIndex(world, nx, ny);
     let w = 1;
-    if (terrain === TERRAIN.FOOD) w += 50;
+    if (world.terrain[idx] === TERRAIN.FOOD) w += 50;
     w += world.pheromoneFood[idx] * 20;
     if (preferHome) w += world.pheromoneHome[idx] * 30;
     weights[d] = w;

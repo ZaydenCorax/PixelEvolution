@@ -1,14 +1,13 @@
 import type { GameState } from '../game/types';
-import { createInitialState, tick, expandGrid, createSimLoop } from '../game/simulation';
+import { createInitialState, tick, createSimLoop } from '../game/simulation';
 import { createRenderer } from '../render/renderer';
 
 export interface GameStore {
-  state: GameState;
-  paused: boolean;
-  gameOver: boolean;
-  gameOverReason: string | undefined;
+  get state(): GameState;
+  get paused(): boolean;
+  get gameOver(): boolean;
+  get gameOverReason(): string | undefined;
   togglePause(): void;
-  expand(): void;
   start(): void;
   stop(): void;
   startNewGame(): void;
@@ -55,12 +54,6 @@ export function createGameStore(container: HTMLDivElement): GameStore {
         simLoop.start();
       }
       notify();
-    },
-    expand(): void {
-      if (expandGrid(state)) {
-        renderer.resize(state.world.w, state.world.h);
-        notify();
-      }
     },
     start(): void {
       simLoop.start();

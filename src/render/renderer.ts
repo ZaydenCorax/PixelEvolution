@@ -1,8 +1,4 @@
 import type { Ants, World as WorldType } from '../game/types';
-import { cellColor, antColor } from './palette';
-
-const EMPTY_CELL_COLOR = [30, 30, 30] as const;
-const CELL_MIN_SIZE = 12;
 
 export interface Renderer {
   container: HTMLDivElement;
@@ -12,55 +8,123 @@ export interface Renderer {
 }
 
 export function createRenderer(container: HTMLDivElement): Renderer {
-  let w = 0;
-  let h = 0;
-  const cells: HTMLDivElement[] = [];
+  let w = 32;
+  let h = 32;
+  let cellSize = 20;
+  let canvas: HTMLCanvasElement;
+  let ctx: CanvasRenderingContext2D;
+  let imageData: ImageData;
 
   function resize(worldW: number, worldH: number): void {
     w = worldW;
     h = worldH;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = container.getBoundingClientRect();
+    const maxSize = Math.min(rect.width || 600, rect.height || 600) / dpr;
+    cellSize = Math.max(8, Math.floor(maxSize / Math.max(w, h)));
+
+    const pixelW = w * cellSize;
+    const pixelH = h * cellSize;
+
+    canvas = document.createElement('canvas');
+    canvas.width = pixelW * dpr;
+    canvas.height = pixelH * dpr;
+    canvas.style.width = `${pixelW}px`;
+    canvas.style.height = `${pixelH}px`;
+    canvas.style.imageRendering = 'pixelated';
+    canvas.style.display = 'block';
+    canvas.style.margin = 'auto';
+    canvas.style.backgroundColor = '#2a2a2a';
+
+    ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+
+    imageData = ctx.createImageData(pixelW, pixelH);
+
     container.innerHTML = '';
-    container.style.display = 'grid';
-    container.style.gridTemplateColumns = `repeat(${w}, minmax(${CELL_MIN_SIZE}px, 1fr))`;
-    container.style.gridTemplateRows = `repeat(${h}, minmax(${CELL_MIN_SIZE}px, 1fr))`;
-    container.style.gap = '1px';
+    container.style.position = 'relative';
     container.style.width = '100%';
     container.style.height = '100%';
-
-    for (let i = 0; i < w * h; i++) {
-      const cell = document.createElement('div');
-      cell.style.width = '100%';
-      cell.style.height = '100%';
-      cell.style.minWidth = `${CELL_MIN_SIZE}px`;
-      cell.style.minHeight = `${CELL_MIN_SIZE}px`;
-      cell.style.boxSizing = 'border-box';
-      cell.style.padding = '2px';
-      cell.style.backgroundColor = `rgb(${EMPTY_CELL_COLOR[0]}, ${EMPTY_CELL_COLOR[1]}, ${EMPTY_CELL_COLOR[2]})`;
-      container.appendChild(cell);
-      cells.push(cell);
-    }
+    container.appendChild(canvas);
   }
 
   function draw(world: WorldType, ants: Ants): void {
-    const worldW = world.w;
-    const worldH = world.h;
-    const len = worldW * worldH;
-    for (let i = 0; i < len; i++) {
-      const terrain = world.terrain[i];
-      const food = world.food[i];
-      const c = cellColor(terrain, food);
-      cells[i].style.backgroundColor = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+    const { terrain, food, pheromoneHome, pheromoneFood } = world;
+    const data = imageData.data;
+    const worldW = w;
+    const worldH = h;
+
+    for (let y = 0; y < worldH; y++) {
+      for (let x = 0; x < worldW; x++) {
+        const idx = y * worldW + x;
+        const t = terrain[idx];
+        let r = 30, g = 30, b = 30;
+
+        if (t === 1) {
+          r = 200;
+          g = 150;
+          b = 50;
+        } else if (t === 2) {
+          const amt = food[idx] / 255;
+          r = Math.round(50 + amt * 100);
+          g = Math.round(120 + amt * 135);
+          b = Math.round(50 + amt * 50);
+        }
+
+        const homePher = pheromoneHome[idx];
+        const foodPher = pheromoneFood[idx];
+
+        if (homePher > 0 || foodPher > 0) {
+          const blend = 0.5;
+          if (homePher > 0) {
+            r = Math.round(r * (1 - blend) + 50 * blend * homePher);
+            g = Math.round(g * (1 - blend) + 80 * blend * homePher);
+            b = Math.round(b * (1 - blend) + 180 * blend * homePher);
+          }
+          if (foodPher > 0) {
+            r = Math.round(r * (1 - blend) + 180 * blend * foodPher);
+            g = Math.round(g * (1 - blend) + 50 * blend * foodPher);
+            b = Math.round(b * (1 - blend) + 120 * blend * foodPher);
+          }
+        }
+
+        for (let cy = 1; cy < cellSize - 1; cy++) {
+          for (let cx = 1; cx < cellSize - 1; cx++) {
+            const px = (y * cellSize + cy) * (worldW * cellSize) + (x * cellSize + cx);
+            const di = px * 4;
+            data[di] = r;
+            data[di + 1] = g;
+            data[di + 2] = b;
+            data[di + 3] = 255;
+          }
+        }
+      }
     }
 
     for (let i = 0; i < ants.count; i++) {
       const ax = ants.x[i];
       const ay = ants.y[i];
-      if (ax >= 0 && ax < worldW && ay >= 0 && ay < worldH) {
-        const idx = ay * worldW + ax;
-        const c = antColor(ants.state[i]);
-        cells[idx].style.backgroundColor = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+      if (ax < 0 || ax >= worldW || ay < 0 || ay >= worldH) continue;
+
+      let r = 220, g = 220, b = 220;
+      if (ants.state[i] === 1) {
+        r = 255; g = 255; b = 100;
+      } else if (ants.state[i] === 2) {
+        r = 100; g = 200; b = 255;
       }
+
+      const centerX = Math.floor(cellSize / 2);
+      const centerY = Math.floor(cellSize / 2);
+      const px = (ay * cellSize + centerY) * (worldW * cellSize) + (ax * cellSize + centerX);
+      const di = px * 4;
+      data[di] = r;
+      data[di + 1] = g;
+      data[di + 2] = b;
+      data[di + 3] = 255;
     }
+
+    ctx.putImageData(imageData, 0, 0);
   }
 
   return {

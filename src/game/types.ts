@@ -5,12 +5,11 @@ export const AntState = {
   RETURNING: 2 as AntState,
 };
 
-export type Terrain = 0 | 1 | 2 | 3;
+export type Terrain = 0 | 1 | 2;
 export const Terrain = {
   EMPTY: 0 as Terrain,
-  WALL: 1 as Terrain,
-  NEST: 2 as Terrain,
-  FOOD: 3 as Terrain,
+  NEST: 1 as Terrain,
+  FOOD: 2 as Terrain,
 };
 
 export interface World {
@@ -24,7 +23,6 @@ export interface World {
 
 export interface Ants {
   count: number;
-  capacity: number;
   x: Int16Array;
   y: Int16Array;
   dir: Uint8Array;
@@ -38,47 +36,9 @@ export interface GameState {
   tick: number;
   resources: {
     food: number;
-    evo: number;
   };
   world: World;
   ants: Ants;
-  stats: {
-    totalFood: number;
-    totalAnts: number;
-    totalTicks: number;
-  };
-  gridTier: number;
-  paused: boolean;
   gameOver: boolean;
   gameOverReason?: string;
 }
-
-export interface SaveV1 {
-  version: 1;
-  savedAt: number;
-  seed: number;
-  tick: number;
-  resources: { food: number; evo: number };
-  world: {
-    w: number;
-    h: number;
-    terrain: string;
-    food: string;
-    pheromoneHome: string;
-    pheromoneFood: string;
-  };
-  ants: {
-    count: number;
-    capacity: number;
-    x: string;
-    y: string;
-    dir: string;
-    state: string;
-    energy: string;
-    age: string;
-  };
-  stats: { totalFood: number; totalAnts: number; totalTicks: number };
-  gridTier: number;
-}
-
-export type SaveData = SaveV1;

@@ -25,7 +25,6 @@
   let food = $derived(store?.state.resources.food ?? 0);
   let population = $derived(store?.state.ants.count ?? 0);
   let tick = $derived(store?.state.tick ?? 0);
-  let score = $derived(store?.state.stats.totalFood ?? 0);
   let gameOverReason = $derived(store?.gameOverReason ?? '');
   let paused = $derived(store?.paused ?? false);
 
@@ -37,10 +36,6 @@
 
   function togglePause() {
     store?.togglePause();
-  }
-
-  function expand() {
-    store?.expand();
   }
 </script>
 
@@ -65,14 +60,12 @@
         <h1 class="title">PixelEvolution</h1>
       </div>
       <div class="hud-center">
-        <span class="stat">Score: {Math.floor(score)}</span>
-        <span class="stat">Colony Health: {population}</span>
         <span class="stat">Food: {Math.floor(food)}</span>
+        <span class="stat">Population: {population}</span>
         <span class="stat">Tick: {tick}</span>
       </div>
       <div class="hud-right">
         <button class="btn" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</button>
-        <button class="btn accent" onclick={expand}>Expand</button>
       </div>
     </header>
   {:else}
@@ -82,8 +75,8 @@
         <p class="game-over-reason">{gameOverReason}</p>
         <div class="final-stats">
           <div class="stat-row">
-            <span>Final Score:</span>
-            <span class="stat-value">{Math.floor(score)}</span>
+            <span>Final Food:</span>
+            <span class="stat-value">{Math.floor(food)}</span>
           </div>
           <div class="stat-row">
             <span>Colony Survived:</span>
@@ -236,15 +229,6 @@
 
   .btn:hover {
     background: #444;
-  }
-
-  .btn.accent {
-    background: #2a6;
-    border-color: #3b7;
-  }
-
-  .btn.accent:hover {
-    background: #3b7;
   }
 
   .game-over {

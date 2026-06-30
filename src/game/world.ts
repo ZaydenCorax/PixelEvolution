@@ -1,5 +1,4 @@
 import {
-  GRID_TIERS,
   TERRAIN,
   MAX_FOOD_PER_CELL,
   FOOD_SPAWN_RATE,
@@ -12,91 +11,48 @@ import {
 import { World } from './types';
 import { randInt, mulberry32 } from './rng';
 
-export function createWorld(tier: number, seed: number): World {
-  const { w, h } = GRID_TIERS[tier];
+export function createWorld(seed: number): World {
+  const w = 32;
+  const h = 32;
   const terrain = new Uint8Array(w * h);
   const food = new Uint8Array(w * h);
   const pheromoneHome = new Float32Array(w * h);
   const pheromoneFood = new Float32Array(w * h);
 
-  worldFillNest(terrain, food, w, h, Math.floor(w / 2), Math.floor(h / 2));
-
-  const rng = mulberry32(seed);
-  seedFood(food, w, h, STARTING_FOOD, rng);
-
-  return { w, h, terrain, food, pheromoneHome, pheromoneFood };
-}
-
-function worldFillNest(
-  terrain: Uint8Array,
-  food: Uint8Array,
-  w: number,
-  h: number,
-  cx: number,
-  cy: number,
-): void {
+  const cx = 16;
+  const cy = 16;
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
       const x = cx + dx;
       const y = cy + dy;
       if (x >= 0 && x < w && y >= 0 && y < h) {
         terrain[y * w + x] = TERRAIN.NEST;
-        food[y * w + x] = 0;
       }
     }
   }
+
+  const rng = mulberry32(seed);
+  seedFood(food, terrain, w, h, STARTING_FOOD, rng);
+
+  return { w, h, terrain, food, pheromoneHome, pheromoneFood };
 }
 
-function seedFood(food: Uint8Array, w: number, h: number, total: number, rng: () => number): void {
+function seedFood(food: Uint8Array, terrain: Uint8Array, w: number, h: number, total: number, rng: () => number): void {
   let remaining = total;
   while (remaining > 0) {
     const x = randInt(rng, w);
     const y = randInt(rng, h);
     const idx = y * w + x;
+    if (terrain[idx] === TERRAIN.NEST) continue;
+    if (food[idx] === 0) {
+      terrain[idx] = TERRAIN.FOOD;
+    }
     if (food[idx] < MAX_FOOD_PER_CELL) {
       const add = Math.min(remaining, MAX_FOOD_PER_CELL - food[idx]);
       food[idx] += add;
       remaining -= add;
     }
   }
-}
-
-export function expandWorld(world: World, newTier: number, seed: number): World {
-  const { w: oldW, h: oldH } = world;
-  const { w, h } = GRID_TIERS[newTier];
-
-  const terrain = new Uint8Array(w * h);
-  const food = new Uint8Array(w * h);
-  const pheromoneHome = new Float32Array(w * h);
-  const pheromoneFood = new Float32Array(w * h);
-
-  const offX = Math.floor((w - oldW) / 2);
-  const offY = Math.floor((h - oldH) / 2);
-
-  for (let y = 0; y < oldH; y++) {
-    for (let x = 0; x < oldW; x++) {
-      const src = y * oldW + x;
-      const dst = (y + offY) * w + (x + offX);
-      terrain[dst] = world.terrain[src];
-      food[dst] = world.food[src];
-      pheromoneHome[dst] = world.pheromoneHome[src];
-      pheromoneFood[dst] = world.pheromoneFood[src];
-    }
-  }
-
-  worldFillNest(
-    terrain,
-    food,
-    w,
-    h,
-    offX + Math.floor(oldW / 2),
-    offY + Math.floor(oldH / 2),
-  );
-
-  const rng = mulberry32(seed);
-  seedFood(food, w, h, STARTING_FOOD * 3, rng);
-
-  return { w, h, terrain, food, pheromoneHome, pheromoneFood };
 }
 
 export function getCellIndex(world: World, x: number, y: number): number {
@@ -196,26 +152,4 @@ export function spawnFoodTick(world: World, rng: () => number): void {
     const add = Math.min(FOOD_SPAWN_AMOUNT, MAX_FOOD_PER_CELL - world.food[idx]);
     world.food[idx] += add;
   }
-}
-
-export function worldToBase64(arr: Uint8Array | Float32Array): string {
-  const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-export function base64ToUint8(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-export function base64ToFloat32(b64: string): Float32Array {
-  return new Float32Array(base64ToUint8(b64).buffer);
 }
