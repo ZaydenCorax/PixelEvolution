@@ -1,7 +1,7 @@
 import {
   ANT_STATE,
   TERRAIN,
-  DIRS,
+  ANT_MOVE_DIRECTIONS,
   ANT_ENERGY_COST,
   ANT_INITIAL_ENERGY,
   ANT_LIFESPAN,
@@ -14,9 +14,9 @@ import {
   dropFood,
   depositPheromone,
 } from './world';
-import { randInt, randChoice, mulberry32 } from './rng';
+import { randomInt } from './rng';
 
-export function createAnts(count: number, world: WorldType, rng: () => number): Ants {
+export function createAnts(count: number, world: WorldType): Ants {
   const x = new Int16Array(count);
   const y = new Int16Array(count);
   const dir = new Uint8Array(count);
@@ -28,9 +28,9 @@ export function createAnts(count: number, world: WorldType, rng: () => number): 
   const cy = Math.floor(world.h / 2);
 
   for (let i = 0; i < count; i++) {
-    x[i] = cx + randInt(rng, 5) - 2;
-    y[i] = cy + randInt(rng, 5) - 2;
-    dir[i] = randInt(rng, 8);
+    x[i] = cx + randomInt(5) - 2;
+    y[i] = cy + randomInt(5) - 2;
+    dir[i] = randomInt(4);
     state[i] = ANT_STATE.SEARCHING;
     energy[i] = ANT_INITIAL_ENERGY;
     age[i] = 0;
@@ -42,7 +42,6 @@ export function createAnts(count: number, world: WorldType, rng: () => number): 
 export function stepAnts(
   ants: Ants,
   world: WorldType,
-  rng: () => number,
 ): void {
   let alive = 0;
 
@@ -61,7 +60,7 @@ export function stepAnts(
     const prevX = ants.x[i];
     const prevY = ants.y[i];
 
-    moveAnt(ants, world, rng, i);
+    moveAnt(ants, world, i);
 
     const cx = ants.x[i];
     const cy = ants.y[i];
@@ -114,14 +113,14 @@ export function stepAnts(
   compactAnts(ants, alive);
 }
 
-function moveAnt(ants: Ants, world: WorldType, rng: () => number, i: number): void {
+function moveAnt(ants: Ants, world: WorldType, i: number): void {
   const cx = ants.x[i];
   const cy = ants.y[i];
 
-  const dirs = getWeightedDirs(world, cx, cy, rng);
-  const chosen = randChoice(rng, dirs);
+  const dirs = getWeightedDirs(world, cx, cy);
+  const chosen = dirs[randomInt(dirs.length)];
   ants.dir[i] = chosen;
-  const d = DIRS[chosen];
+  const d = ANT_MOVE_DIRECTIONS[chosen];
   ants.x[i] = cx + d.dx;
   ants.y[i] = cy + d.dy;
 }
@@ -129,11 +128,10 @@ function moveAnt(ants: Ants, world: WorldType, rng: () => number, i: number): vo
 function followPheromoneHome(ants: Ants, world: WorldType, i: number): void {
   const cx = ants.x[i];
   const cy = ants.y[i];
-  const rng = mulberry32(ants.age[i] + ants.x[i] * 997 + ants.y[i] * 1013);
-  const dirs = getWeightedDirs(world, cx, cy, rng, true);
-  const chosen = randChoice(rng, dirs);
+  const dirs = getWeightedDirs(world, cx, cy, true);
+  const chosen = dirs[randomInt(dirs.length)];
   ants.dir[i] = chosen;
-  const d = DIRS[chosen];
+  const d = ANT_MOVE_DIRECTIONS[chosen];
   ants.x[i] = cx + d.dx;
   ants.y[i] = cy + d.dy;
 }
@@ -142,15 +140,14 @@ function getWeightedDirs(
   world: WorldType,
   x: number,
   y: number,
-  rng: () => number,
   preferHome = false,
 ): number[] {
-  const weights = new Array(8).fill(0);
+  const weights = new Array(4).fill(0);
   const valid: number[] = [];
 
-  for (let d = 0; d < 8; d++) {
-    const nx = x + DIRS[d].dx;
-    const ny = y + DIRS[d].dy;
+  for (let d = 0; d < 4; d++) {
+    const nx = x + ANT_MOVE_DIRECTIONS[d].dx;
+    const ny = y + ANT_MOVE_DIRECTIONS[d].dy;
     if (!inBounds(world, nx, ny)) {
       weights[d] = -1;
       continue;
@@ -166,14 +163,14 @@ function getWeightedDirs(
     weights[d] = w;
   }
 
-  if (valid.length === 0) return [randInt(rng, 8)];
+  if (valid.length === 0) return [randomInt(4)];
 
   const total = valid.reduce((sum, d) => sum + weights[d], 0);
   if (total <= 0) {
     return valid;
   }
 
-  let roll = rng() * total;
+  let roll = Math.random() * total;
   for (const d of valid) {
     roll -= weights[d];
     if (roll <= 0) return [d];

@@ -94,7 +94,7 @@ Each ant has:
 
 ## 7. Controls
 
-- **Start**: Begin simulation with new random seed.
+- **Start**: Begin simulation.
 - **Pause/Resume**: Toggle simulation.
 - **Restart**: Available on game over screen.
 
@@ -104,7 +104,6 @@ Each ant has:
 
 - Uses typed arrays (Uint8Array, Float32Array) for grid state.
 - Ants stored as Structure-of-Arrays for cache efficiency.
-- Seeded PRNG (mulberry32) for deterministic simulation.
 - Svelte 5 runes for UI reactivity.
 - Game store manages state and simulation loop.
 
@@ -119,7 +118,7 @@ src/
 ├── game/
 │   ├── constants.ts         # Grid size, tick rate, tuning numbers
 │   ├── types.ts             # World, Ants, GameState interfaces
-│   ├── rng.ts               # Seeded PRNG
+│   ├── rng.ts               # random functions
 │   ├── world.ts             # Grid state, food spawning, pheromone decay/diffusion
 │   ├── ant.ts               # Ant state + step behavior
 │   └── simulation.ts        # Fixed-timestep tick loop, orchestrates world+ants

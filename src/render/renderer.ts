@@ -114,14 +114,20 @@ export function createRenderer(container: HTMLDivElement): Renderer {
         r = 100; g = 200; b = 255;
       }
 
-      const centerX = Math.floor(cellSize / 2);
-      const centerY = Math.floor(cellSize / 2);
-      const px = (ay * cellSize + centerY) * (worldW * cellSize) + (ax * cellSize + centerX);
-      const di = px * 4;
-      data[di] = r;
-      data[di + 1] = g;
-      data[di + 2] = b;
-      data[di + 3] = 255;
+      const antSize = Math.min(cellSize - 2, 10);
+      const startX = ax * cellSize + Math.floor((cellSize - antSize) / 2);
+      const startY = ay * cellSize + Math.floor((cellSize - antSize) / 2);
+
+      for (let ay2 = 0; ay2 < antSize; ay2++) {
+        for (let ax2 = 0; ax2 < antSize; ax2++) {
+          const px = ((startY + ay2) * (worldW * cellSize)) + (startX + ax2);
+          const di = px * 4;
+          data[di] = r;
+          data[di + 1] = g;
+          data[di + 2] = b;
+          data[di + 3] = 255;
+        }
+      }
     }
 
     ctx.putImageData(imageData, 0, 0);

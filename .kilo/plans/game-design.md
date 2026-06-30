@@ -226,7 +226,6 @@ All visual output is rendered onto a single `<canvas>` element using the HTML5 C
 interface SaveV1 {
   version: 1;
   savedAt: number;
-  seed: number;
   tick: number;
   resources: { food: number; evo: number };
   world: { w, h, terrain, food, pheromoneHome, pheromoneFood };

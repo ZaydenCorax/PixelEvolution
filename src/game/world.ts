@@ -9,9 +9,9 @@ import {
   PHEROMONE_DIFFUSE_AMOUNT,
 } from './constants';
 import { World } from './types';
-import { randInt, mulberry32 } from './rng';
+import { randomInt } from './rng';
 
-export function createWorld(seed: number): World {
+export function createWorld(): World {
   const w = 32;
   const h = 32;
   const terrain = new Uint8Array(w * h);
@@ -31,17 +31,16 @@ export function createWorld(seed: number): World {
     }
   }
 
-  const rng = mulberry32(seed);
-  seedFood(food, terrain, w, h, STARTING_FOOD, rng);
+  spawnFood(food, terrain, w, h, STARTING_FOOD);
 
   return { w, h, terrain, food, pheromoneHome, pheromoneFood };
 }
 
-function seedFood(food: Uint8Array, terrain: Uint8Array, w: number, h: number, total: number, rng: () => number): void {
+function spawnFood(food: Uint8Array, terrain: Uint8Array, w: number, h: number, total: number): void {
   let remaining = total;
   while (remaining > 0) {
-    const x = randInt(rng, w);
-    const y = randInt(rng, h);
+    const x = randomInt(w);
+    const y = randomInt(h);
     const idx = y * w + x;
     if (terrain[idx] === TERRAIN.NEST) continue;
     if (food[idx] === 0) {
@@ -145,8 +144,8 @@ function diffusePheromones(world: World, arr: Float32Array): void {
 export function spawnFoodTick(world: World, rng: () => number): void {
   if (rng() > FOOD_SPAWN_RATE) return;
 
-  const x = randInt(rng, world.w);
-  const y = randInt(rng, world.h);
+  const x = randomInt(world.w);
+  const y = randomInt(world.h);
   const idx = getCellIndex(world, x, y);
   if (world.food[idx] < MAX_FOOD_PER_CELL && world.terrain[idx] !== TERRAIN.NEST) {
     const add = Math.min(FOOD_SPAWN_AMOUNT, MAX_FOOD_PER_CELL - world.food[idx]);

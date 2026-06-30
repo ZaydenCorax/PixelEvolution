@@ -32,7 +32,6 @@ export interface Ants {
 }
 
 export interface GameState {
-  seed: number;
   tick: number;
   resources: {
     food: number;
@@ -41,4 +40,5 @@ export interface GameState {
   ants: Ants;
   gameOver: boolean;
   gameOverReason?: string;
+  paused: boolean;
 }

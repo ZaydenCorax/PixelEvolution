@@ -14,7 +14,7 @@ export const ANT_STATE = {
   RETURNING: 2,
 } as const;
 
-export const DIRS = [
+export const DIRECTIONS = [
   { dx: 0, dy: -1 },
   { dx: 1, dy: -1 },
   { dx: 1, dy: 0 },
@@ -23,6 +23,13 @@ export const DIRS = [
   { dx: -1, dy: 1 },
   { dx: -1, dy: 0 },
   { dx: -1, dy: -1 },
+] as const;
+
+export const ANT_MOVE_DIRECTIONS = [
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 0 },
 ] as const;
 
 export const PHEROMONE_DECAY = 0.995;

@@ -1,16 +1,13 @@
 import { GameState } from './types';
 import { createWorld, tickPheromones, spawnFoodTick } from './world';
 import { createAnts, stepAnts } from './ant';
-import { mulberry32 } from './rng';
 import { STARTING_ANTS, TICK_INTERVAL_MS, TERRAIN } from './constants';
 
-export function createInitialState(seed: number = Date.now()): GameState {
-  const world = createWorld(seed);
-  const rng = mulberry32(seed);
-  const ants = createAnts(STARTING_ANTS, world, rng);
+export function createInitialState(): GameState {
+  const world = createWorld();
+  const ants = createAnts(STARTING_ANTS, world);
 
   return {
-    seed,
     tick: 0,
     resources: { food: 0 },
     world,
@@ -25,9 +22,9 @@ export function tick(state: GameState): void {
   if (state.paused) return;
   if (state.gameOver) return;
 
-  const rng = mulberry32(state.seed + state.tick * 1000);
+  const rng = Math.random;
 
-  stepAnts(state.ants, state.world, rng);
+  stepAnts(state.ants, state.world);
   tickPheromones(state.world, state.tick);
   spawnFoodTick(state.world, rng);
 
