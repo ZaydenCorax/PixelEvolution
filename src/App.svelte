@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { createGameStore } from './stores/gameStore';
+  import { ANT_STATE } from './game/constants';
 
   let container: HTMLDivElement;
   let store = $state<ReturnType<typeof createGameStore> | null>(null);
@@ -27,6 +28,55 @@
   let tick = $derived(store?.state.tick ?? 0);
   let gameOverReason = $derived(store?.gameOverReason ?? '');
   let paused = $derived(store?.paused ?? false);
+  let ants = $derived(store?.state.ants);
+
+  let antStats = $derived.by(() => {
+    if (!ants) return [];
+    const stats: Record<number, { count: number; totalEnergy: number; totalAge: number }> = {
+      [ANT_STATE.SEARCHING]: { count: 0, totalEnergy: 0, totalAge: 0 },
+      [ANT_STATE.CARRYING]: { count: 0, totalEnergy: 0, totalAge: 0 },
+      [ANT_STATE.RETURNING]: { count: 0, totalEnergy: 0, totalAge: 0 },
+    };
+    for (let i = 0; i < ants.count; i++) {
+      const s = ants.state[i];
+      if (s > 2) continue;
+      stats[s].count++;
+      stats[s].totalEnergy += ants.energy[i];
+      stats[s].totalAge += ants.age[i];
+    }
+    return [
+      {
+        state: 'Searching',
+        count: stats[ANT_STATE.SEARCHING].count,
+        avgEnergy: stats[ANT_STATE.SEARCHING].count
+          ? stats[ANT_STATE.SEARCHING].totalEnergy / stats[ANT_STATE.SEARCHING].count
+          : 0,
+        avgAge: stats[ANT_STATE.SEARCHING].count
+          ? stats[ANT_STATE.SEARCHING].totalAge / stats[ANT_STATE.SEARCHING].count
+          : 0,
+      },
+      {
+        state: 'Carrying',
+        count: stats[ANT_STATE.CARRYING].count,
+        avgEnergy: stats[ANT_STATE.CARRYING].count
+          ? stats[ANT_STATE.CARRYING].totalEnergy / stats[ANT_STATE.CARRYING].count
+          : 0,
+        avgAge: stats[ANT_STATE.CARRYING].count
+          ? stats[ANT_STATE.CARRYING].totalAge / stats[ANT_STATE.CARRYING].count
+          : 0,
+      },
+      {
+        state: 'Returning',
+        count: stats[ANT_STATE.RETURNING].count,
+        avgEnergy: stats[ANT_STATE.RETURNING].count
+          ? stats[ANT_STATE.RETURNING].totalEnergy / stats[ANT_STATE.RETURNING].count
+          : 0,
+        avgAge: stats[ANT_STATE.RETURNING].count
+          ? stats[ANT_STATE.RETURNING].totalAge / stats[ANT_STATE.RETURNING].count
+          : 0,
+      },
+    ];
+  });
 
   function startGame() {
     if (!store) return;
@@ -40,7 +90,39 @@
 </script>
 
 <div class="app" class:playing={screen === 'playing'}>
-  <div bind:this={container} class="world-container"></div>
+  <div class="game-layout">
+    <div bind:this={container} class="world-container"></div>
+    {#if screen === 'playing'}
+      <aside class="stats-panel">
+        <h3>Colony Stats</h3>
+        <table class="stats-table">
+          <thead>
+            <tr>
+              <th>State</th>
+              <th>Count</th>
+              <th>Avg Energy</th>
+              <th>Avg Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each antStats as row}
+              <tr>
+                <td class="state-{row.state.toLowerCase()}">{row.state}</td>
+                <td>{row.count}</td>
+                <td>{row.avgEnergy.toFixed(1)}</td>
+                <td>{row.avgAge.toFixed(1)}</td>
+              </tr>
+            {/each}
+            {#if antStats.every((r) => r.count === 0)}
+              <tr>
+                <td colspan="4" class="no-data">No living ants</td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+      </aside>
+    {/if}
+  </div>
 
   {#if screen === 'menu'}
     <div class="overlay menu">
@@ -100,22 +182,77 @@
     position: relative;
   }
 
+  .game-layout {
+    display: flex;
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
   .world-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: calc(100vh - 48px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s;
+    flex: 1;
+    position: relative;
     background: #2a2a2a;
     overflow: hidden;
   }
 
-  .playing .world-container {
-    opacity: 1;
-    pointer-events: auto;
+  .stats-panel {
+    width: 260px;
+    background: #1a1a1a;
+    border-left: 1px solid #333;
+    padding: 1rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .stats-panel h3 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1rem;
+    color: #fff;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.5rem;
+  }
+
+  .stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .stats-table th,
+  .stats-table td {
+    padding: 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid #2a2a2a;
+  }
+
+  .stats-table th {
+    color: #888;
+    font-weight: 500;
+  }
+
+  .stats-table td {
+    color: #ddd;
+  }
+
+  .state-searching {
+    color: #aaddff;
+  }
+
+  .state-carrying {
+    color: #ffff88;
+  }
+
+  .state-returning {
+    color: #88ccff;
+  }
+
+  .no-data {
+    text-align: center;
+    color: #666;
+    font-style: italic;
   }
 
   .overlay {
