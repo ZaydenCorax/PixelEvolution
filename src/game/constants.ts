@@ -1,13 +1,12 @@
 export const GRID_TIERS = [
-  { w: 48, h: 32 },
-  { w: 96, h: 64 },
-  { w: 144, h: 96 },
-  { w: 192, h: 128 },
-  { w: 256, h: 160 },
+  { w: 32, h: 32 },
+  { w: 64, h: 64 },
+  { w: 96, h: 96 },
+  { w: 128, h: 128 },
+  { w: 160, h: 160 },
 ] as const;
 
-export const PIXEL_SCALE = 6;
-export const TICK_RATE_HZ = 10;
+export const TICK_RATE_HZ = 1;
 export const TICK_INTERVAL_MS = 1000 / TICK_RATE_HZ;
 export const MAX_ANTS_PER_TIER = [50, 200, 600, 1500, 3000] as const;
 export const MAX_FOOD_PER_CELL = 255;

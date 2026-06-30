@@ -16,6 +16,7 @@ export default ts.config(
       },
       globals: {
         HTMLCanvasElement: 'readonly',
+        HTMLDivElement: 'readonly',
         HTMLImageElement: 'readonly',
       }
     }

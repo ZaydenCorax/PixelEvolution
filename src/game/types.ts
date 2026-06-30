@@ -49,7 +49,6 @@ export interface GameState {
   };
   gridTier: number;
   paused: boolean;
-  speedMultiplier: number;
   gameOver: boolean;
   gameOverReason?: string;
 }
@@ -80,7 +79,6 @@ export interface SaveV1 {
   };
   stats: { totalFood: number; totalAnts: number; totalTicks: number };
   gridTier: number;
-  speedMultiplier: number;
 }
 
 export type SaveData = SaveV1;

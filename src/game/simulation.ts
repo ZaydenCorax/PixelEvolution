@@ -22,7 +22,6 @@ export function createInitialState(seed: number = Date.now()): GameState {
     },
     gridTier: 0,
     paused: false,
-    speedMultiplier: 1,
     gameOver: false,
     gameOverReason: undefined,
   };

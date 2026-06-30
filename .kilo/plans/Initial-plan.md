@@ -94,11 +94,12 @@ PixelEvolution/
 - Grid: `W x H` cells, **upgradable in-game**. Tiers (initial design, tunable):
   | Tier | Dimensions | Cells | Theme |
   |---|---|---|---|
-  | 1 (start) | 48 x 32 | ~1.5k | Cozy nest |
-  | 2 | 96 x 64 | ~6k | Small territory |
-  | 3 | 144 x 96 | ~14k | Expanded |
-  | 4 | 192 x 128 | ~24k | Large |
-  | 5 | 256 x 160 | ~41k | Epic (Worker recommended) |
+  | 1 (start) | 32 x 32 | 1024 | Cozy nest |
+  | 2 | 64 x 64 | 4096 | Small territory |
+  | 3 | 96 x 96 | ~9k | Expanded |
+  | 4 | 128 x 128 | ~16k | Large |
+  | 5 | 160 x 160 | ~26k | Epic (Worker recommended) |
+  - Also see `grid-design.md` for grid design
 - Upgrading grid is a dedicated upgrade line ("Expand Territory") with high food + EVO cost. Each expansion:
   - Allocates new typed arrays and copies old world into center.
   - Scales resource spawn rates and hazard/enemy density (post-MVP) proportionally.

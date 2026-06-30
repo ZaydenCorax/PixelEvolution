@@ -2,14 +2,14 @@
   import { onMount } from 'svelte';
   import { createGameStore } from './stores/gameStore';
 
-  let canvas: HTMLCanvasElement | null = null;
+  let container: HTMLDivElement;
   let store = $state<ReturnType<typeof createGameStore> | null>(null);
 
   let screen = $state<'menu' | 'playing' | 'gameover'>('menu');
 
   onMount(() => {
-    if (canvas) {
-      store = createGameStore(canvas);
+    if (container) {
+      store = createGameStore(container);
       store.startNewGame();
       store.stop();
     }
@@ -39,17 +39,13 @@
     store?.togglePause();
   }
 
-  function setSpeed(multiplier: number) {
-    store?.setSpeed(multiplier);
-  }
-
   function expand() {
     store?.expand();
   }
 </script>
 
 <div class="app" class:playing={screen === 'playing'}>
-  <canvas bind:this={canvas} class="world-canvas"></canvas>
+  <div bind:this={container} class="world-container"></div>
 
   {#if screen === 'menu'}
     <div class="overlay menu">
@@ -76,10 +72,6 @@
       </div>
       <div class="hud-right">
         <button class="btn" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</button>
-        <button class="btn" onclick={() => setSpeed(0.5)}>0.5x</button>
-        <button class="btn" onclick={() => setSpeed(1)}>1x</button>
-        <button class="btn" onclick={() => setSpeed(2)}>2x</button>
-        <button class="btn" onclick={() => setSpeed(4)}>4x</button>
         <button class="btn accent" onclick={expand}>Expand</button>
       </div>
     </header>
@@ -115,20 +107,20 @@
     position: relative;
   }
 
-  .world-canvas {
+  .world-container {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
-    height: 100%;
-    image-rendering: pixelated;
-    background: #222;
+    height: calc(100vh - 48px);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s;
+    background: #2a2a2a;
+    overflow: hidden;
   }
 
-  .playing .world-canvas {
+  .playing .world-container {
     opacity: 1;
     pointer-events: auto;
   }

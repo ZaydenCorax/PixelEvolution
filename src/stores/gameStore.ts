@@ -5,11 +5,9 @@ import { createRenderer } from '../render/renderer';
 export interface GameStore {
   state: GameState;
   paused: boolean;
-  speedMultiplier: number;
   gameOver: boolean;
   gameOverReason: string | undefined;
   togglePause(): void;
-  setSpeed(multiplier: number): void;
   expand(): void;
   start(): void;
   stop(): void;
@@ -17,9 +15,9 @@ export interface GameStore {
   subscribe(fn: () => void): () => void;
 }
 
-export function createGameStore(canvas: HTMLCanvasElement): GameStore {
+export function createGameStore(container: HTMLDivElement): GameStore {
   let state = createInitialState();
-  const renderer = createRenderer(canvas);
+  const renderer = createRenderer(container);
   renderer.resize(state.world.w, state.world.h);
 
   const listeners = new Set<() => void>();
@@ -43,9 +41,6 @@ export function createGameStore(canvas: HTMLCanvasElement): GameStore {
     get paused() {
       return state.paused;
     },
-    get speedMultiplier() {
-      return state.speedMultiplier;
-    },
     get gameOver() {
       return state.gameOver;
     },
@@ -59,10 +54,6 @@ export function createGameStore(canvas: HTMLCanvasElement): GameStore {
       } else {
         simLoop.start();
       }
-      notify();
-    },
-    setSpeed(multiplier: number): void {
-      state.speedMultiplier = multiplier;
       notify();
     },
     expand(): void {

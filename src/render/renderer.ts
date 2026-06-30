@@ -1,85 +1,74 @@
 import type { Ants, World as WorldType } from '../game/types';
-import { inBounds } from '../game/world';
 import { cellColor, antColor } from './palette';
 
-const PIXEL_SCALE = 6;
+const EMPTY_CELL_COLOR = [30, 30, 30] as const;
+const CELL_MIN_SIZE = 12;
 
 export interface Renderer {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  offscreen: HTMLCanvasElement;
-  offCtx: CanvasRenderingContext2D;
-  buffer: ImageData;
-  pixels: Uint8ClampedArray;
+  container: HTMLDivElement;
   resize(w: number, h: number): void;
   draw(world: WorldType, ants: Ants): void;
   destroy(): void;
 }
 
-export function createRenderer(canvas: HTMLCanvasElement): Renderer {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  const offscreen = document.createElement('canvas');
-  const offCtx = offscreen.getContext('2d', { willReadFrequently: true })!;
-
+export function createRenderer(container: HTMLDivElement): Renderer {
   let w = 0;
   let h = 0;
-  let pixels = new Uint8ClampedArray(4);
-  let buffer = new ImageData(1, 1);
+  const cells: HTMLDivElement[] = [];
 
   function resize(worldW: number, worldH: number): void {
     w = worldW;
     h = worldH;
-    canvas.width = worldW * PIXEL_SCALE;
-    canvas.height = worldH * PIXEL_SCALE;
-    offscreen.width = worldW;
-    offscreen.height = worldH;
-    buffer = offCtx.createImageData(worldW, worldH);
-    pixels = buffer.data;
+    container.innerHTML = '';
+    container.style.display = 'grid';
+    container.style.gridTemplateColumns = `repeat(${w}, minmax(${CELL_MIN_SIZE}px, 1fr))`;
+    container.style.gridTemplateRows = `repeat(${h}, minmax(${CELL_MIN_SIZE}px, 1fr))`;
+    container.style.gap = '1px';
+    container.style.width = '100%';
+    container.style.height = '100%';
+
+    for (let i = 0; i < w * h; i++) {
+      const cell = document.createElement('div');
+      cell.style.width = '100%';
+      cell.style.height = '100%';
+      cell.style.minWidth = `${CELL_MIN_SIZE}px`;
+      cell.style.minHeight = `${CELL_MIN_SIZE}px`;
+      cell.style.boxSizing = 'border-box';
+      cell.style.padding = '2px';
+      cell.style.backgroundColor = `rgb(${EMPTY_CELL_COLOR[0]}, ${EMPTY_CELL_COLOR[1]}, ${EMPTY_CELL_COLOR[2]})`;
+      container.appendChild(cell);
+      cells.push(cell);
+    }
   }
 
   function draw(world: WorldType, ants: Ants): void {
-    const len = w * h;
+    const worldW = world.w;
+    const worldH = world.h;
+    const len = worldW * worldH;
     for (let i = 0; i < len; i++) {
       const terrain = world.terrain[i];
       const food = world.food[i];
       const c = cellColor(terrain, food);
-
-      const j = i * 4;
-      pixels[j] = c[0];
-      pixels[j + 1] = c[1];
-      pixels[j + 2] = c[2];
-      pixels[j + 3] = c[3];
+      cells[i].style.backgroundColor = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
     }
 
     for (let i = 0; i < ants.count; i++) {
       const ax = ants.x[i];
       const ay = ants.y[i];
-      if (inBounds(world, ax, ay)) {
-        const idx = ay * world.w + ax;
+      if (ax >= 0 && ax < worldW && ay >= 0 && ay < worldH) {
+        const idx = ay * worldW + ax;
         const c = antColor(ants.state[i]);
-        const j = idx * 4;
-        pixels[j] = c[0];
-        pixels[j + 1] = c[1];
-        pixels[j + 2] = c[2];
-        pixels[j + 3] = c[3];
+        cells[idx].style.backgroundColor = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
       }
     }
-
-    offCtx.putImageData(buffer, 0, 0);
-
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(offscreen, 0, 0, canvas.width, canvas.height);
   }
 
   return {
-    canvas,
-    ctx,
-    offscreen,
-    offCtx,
-    buffer,
-    pixels,
+    container,
     resize,
     draw,
-    destroy() {},
+    destroy() {
+      container.innerHTML = '';
+    },
   };
 }
