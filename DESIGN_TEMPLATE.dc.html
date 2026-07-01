@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #16181c; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #33383f; border-radius: 4px; }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: radial-gradient(1200px 800px at 30% -5%, #1e2127 0%, #131519 55%, #101216 100%); font-family: 'Space Grotesk', system-ui, sans-serif; color: #e7ebf0; padding: 56px 64px 96px;">
+
+  <!-- Intro -->
+  <div style="max-width: 900px; margin-bottom: 44px;">
+    <div style="display: inline-flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #e0a13a; text-transform: uppercase; margin-bottom: 14px;">
+      <span style="width: 8px; height: 8px; background: #e0a13a; border-radius: 2px; display: inline-block;"></span>
+      UX Redesign · Main Simulation Screen
+    </div>
+    <h1 style="font-size: 40px; font-weight: 700; margin: 0 0 14px; letter-spacing: -0.02em;">PixelEvolution — refined main screen</h1>
+    <p style="font-size: 16px; line-height: 1.6; color: #9aa3ad; margin: 0;">Same dark, Conway-ish soul — tightened. The Instrument direction: a bigger centered grid, a real transport bar, an integrated stats panel, a proper legend, and pheromone breadcrumb trails kept as shrinking per-cell squares in two faded hues (blue = home, pink = food) so they never read as ants. It also carries a hover cell-inspector tooltip and leaves shelf-space for the planned economy layer.</p>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 72px; align-items: flex-start;">
+
+    <!-- ============================ OPTION A ============================ -->
+    <section id="1a" style="width: 1200px;">
+      <div style="display: flex; align-items: baseline; gap: 14px; margin-bottom: 16px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #0c0e11; background: #e0a13a; padding: 4px 10px; border-radius: 6px;">1A</span>
+        <h2 style="font-size: 22px; font-weight: 600; margin: 0;">Instrument</h2>
+        <span style="font-size: 14px; color: #8b939d;">Dual-rail dashboard — controls left, colony readout right, grid dominant in the middle.</span>
+      </div>
+
+      <div style="position: relative; width: 1200px; height: 760px; background: #0b0d10; border: 1px solid #24282f; border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0,0,0,0.7); display: flex; flex-direction: column;">
+
+        <!-- Resource bar -->
+        <div style="height: 54px; flex: none; display: flex; align-items: center; gap: 20px; padding: 0 20px; background: #101318; border-bottom: 1px solid #1b1f26;">
+          <div style="display: flex; align-items: center; gap: 9px;">
+            <span style="width: 10px; height: 10px; background: #e0a13a; border-radius: 2px; box-shadow: 0 0 10px #e0a13a99;"></span>
+            <span style="font-weight: 600; font-size: 15px; letter-spacing: -0.01em;">PixelEvolution</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6b727b; margin-left: 4px;">colony · gen 4</span>
+          </div>
+          <div style="width: 1px; height: 22px; background: #23282f;"></div>
+          <!-- currencies -->
+          <div style="display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #14181e; border: 1px solid #232a31; border-radius: 8px;">
+            <span style="width: 11px; height: 11px; background: linear-gradient(135deg,#7ed37e,#2f6b3a); border-radius: 2px;"></span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600;">1,240</span>
+            <span style="font-size: 11px; color: #7c848d;">food</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #101318; border: 1px dashed #262c33; border-radius: 8px; opacity: 0.55;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color:#b9c0c8;">EVO —</span>
+            <span style="font-size: 9px; letter-spacing: 1px; color: #e0a13a; background:#e0a13a1f; padding: 2px 5px; border-radius: 4px;">SOON</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #101318; border: 1px dashed #262c33; border-radius: 8px; opacity: 0.55;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color:#b9c0c8;">GT —</span>
+            <span style="font-size: 9px; letter-spacing: 1px; color: #e0a13a; background:#e0a13a1f; padding: 2px 5px; border-radius: 4px;">SOON</span>
+          </div>
+          <div style="flex: 1;"></div>
+          <div style="display: flex; align-items: center; gap: 18px; font-family: 'JetBrains Mono', monospace; font-size: 13px;">
+            <span style="color:#8b939d;">Tick <span style="color:#e7ebf0; font-weight:600;">21</span></span>
+            <span style="color:#8b939d;">Pop <span style="color:#e7ebf0; font-weight:600;">11</span><span style="color:#5c636c;">/15</span></span>
+          </div>
+        </div>
+
+        <div style="flex: 1; display: flex; min-height: 0;">
+          <!-- LEFT RAIL -->
+          <div style="width: 214px; flex: none; border-right: 1px solid #1b1f26; background: #0e1116; padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 20px;">
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; color:#6b727b; margin-bottom:11px;">PLAYBACK</div>
+              <div style="display:flex; gap:9px; margin-bottom:11px;">
+                <button style="flex:1; height:42px; border:none; border-radius:9px; background:#e0a13a; color:#14100a; font-weight:700; font-size:14px; display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;">❚❚ Pause</button>
+                <button style="width:42px; height:42px; border:1px solid #2a3038; border-radius:9px; background:#181c22; color:#cfd6df; font-size:15px; cursor:pointer;" title="Step one tick">▶❘</button>
+                <button style="width:42px; height:42px; border:1px solid #2a3038; border-radius:9px; background:#181c22; color:#cfd6df; font-size:16px; cursor:pointer;" title="Restart colony">⟲</button>
+              </div>
+              <div style="display:flex; background:#12161b; border:1px solid #21272e; border-radius:9px; padding:3px; gap:3px;">
+                <span style="flex:1; text-align:center; padding:6px 0; font-family:'JetBrains Mono',monospace; font-size:12px; color:#8b939d; border-radius:6px; cursor:pointer;">1×</span>
+                <span style="flex:1; text-align:center; padding:6px 0; font-family:'JetBrains Mono',monospace; font-size:12px; color:#fff; background:#2a3038; border-radius:6px; font-weight:600; cursor:pointer;">2×</span>
+                <span style="flex:1; text-align:center; padding:6px 0; font-family:'JetBrains Mono',monospace; font-size:12px; color:#8b939d; border-radius:6px; cursor:pointer;">4×</span>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; color:#6b727b; margin-bottom:11px;">SEED</div>
+              <div style="display:flex; align-items:center; gap:8px; background:#12161b; border:1px solid #21272e; border-radius:9px; padding:9px 11px;">
+                <span style="font-family:'JetBrains Mono',monospace; font-size:14px; letter-spacing:1px; color:#e7ebf0; flex:1;">384726</span>
+                <span style="color:#6b727b; font-size:13px; cursor:pointer;">✎</span>
+              </div>
+              <div style="font-size:11px; color:#6b727b; margin-top:7px; cursor:pointer;">↻ reroll for a fresh world</div>
+            </div>
+
+            <div style="flex:1;"></div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; color:#6b727b; margin-bottom:11px;">LEGEND</div>
+              <div style="display:flex; flex-direction:column; gap:9px; font-size:12.5px; color:#c3cad2;">
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;background:#e0a13a;border-radius:3px;flex:none;"></span>Nest</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;background:linear-gradient(135deg,#7ed37e,#2f6b3a);border-radius:3px;flex:none;"></span>Food</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;border-radius:50%;background:#eef2ff;border:1px solid #0006;flex:none;"></span>Ant · searching</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;border-radius:50%;background:#b6f36a;border:1px solid #0006;flex:none;"></span>Ant · carrying</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;border-radius:50%;background:#ff9d4d;border:1px solid #0006;flex:none;"></span>Ant · returning</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;border-radius:2px;background:rgba(74,163,255,0.55);transform:scale(0.72);flex:none;"></span>Home trail</div>
+                <div style="display:flex; align-items:center; gap:10px;"><span style="width:14px;height:14px;border-radius:2px;background:rgba(255,93,176,0.55);transform:scale(0.72);flex:none;"></span>Food trail</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER GRID -->
+          <div style="flex:1; position:relative; display:flex; align-items:center; justify-content:center; background:#0b0d10; min-width:0;">
+            <canvas id="cvA"></canvas>
+            <!-- tooltip -->
+            <div style="position:absolute; left:calc(50% + 92px); top:150px; width:186px; background:rgba(16,19,24,0.94); border:1px solid #2c333c; border-radius:10px; padding:12px 13px; backdrop-filter:blur(6px); box-shadow:0 12px 30px -8px #000; pointer-events:none;">
+              <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#e0a13a; margin-bottom:8px;">cell (22, 7)</div>
+              <div style="display:flex; flex-direction:column; gap:6px; font-family:'JetBrains Mono',monospace; font-size:11.5px; color:#b6bec7;">
+                <div style="display:flex; justify-content:space-between;"><span style="color:#7c848d;">terrain</span><span style="color:#7ed37e;">food</span></div>
+                <div style="display:flex; justify-content:space-between;"><span style="color:#7c848d;">food</span><span>34</span></div>
+                <div style="display:flex; justify-content:space-between;"><span style="color:#7c848d;">home φ</span><span style="color:#77b6ff;">0.12</span></div>
+                <div style="display:flex; justify-content:space-between;"><span style="color:#7c848d;">food φ</span><span style="color:#ff8ac6;">0.61</span></div>
+                <div style="display:flex; justify-content:space-between;"><span style="color:#7c848d;">ants</span><span>1</span></div>
+              </div>
+            </div>
+            <span data-pin="1" style="position:absolute; left:50%; top:50%; transform:translate(-8px,-8px);"></span>
+          </div>
+
+          <!-- RIGHT RAIL -->
+          <div style="width: 256px; flex:none; border-left:1px solid #1b1f26; background:#0e1116; padding:16px 16px 18px; display:flex; flex-direction:column; gap:18px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; color:#6b727b;">COLONY</div>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b939d;">11 alive</div>
+              </div>
+              <!-- stat rows -->
+              <div style="display:flex; flex-direction:column; gap:12px;">
+                <div>
+                  <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px;"><span style="display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:#eef2ff;"></span>Searching</span><span style="font-family:'JetBrains Mono',monospace;">6</span></div>
+                  <div style="height:5px; background:#1a1e24; border-radius:3px; overflow:hidden;"><div style="width:79%; height:100%; background:#4aa3ff;"></div></div>
+                  <div style="display:flex; justify-content:space-between; font-family:'JetBrains Mono',monospace; font-size:10px; color:#6b727b; margin-top:3px;"><span>e 79</span><span>age 21</span></div>
+                </div>
+                <div>
+                  <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px;"><span style="display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:#b6f36a;"></span>Carrying</span><span style="font-family:'JetBrains Mono',monospace;">4</span></div>
+                  <div style="height:5px; background:#1a1e24; border-radius:3px; overflow:hidden;"><div style="width:88%; height:100%; background:#b6f36a;"></div></div>
+                  <div style="display:flex; justify-content:space-between; font-family:'JetBrains Mono',monospace; font-size:10px; color:#6b727b; margin-top:3px;"><span>e 88</span><span>age 34</span></div>
+                </div>
+                <div>
+                  <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px;"><span style="display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:#ff9d4d;"></span>Returning</span><span style="font-family:'JetBrains Mono',monospace;">1</span></div>
+                  <div style="height:5px; background:#1a1e24; border-radius:3px; overflow:hidden;"><div style="width:41%; height:100%; background:#ff9d4d;"></div></div>
+                  <div style="display:flex; justify-content:space-between; font-family:'JetBrains Mono',monospace; font-size:10px; color:#6b727b; margin-top:3px;"><span>e 41</span><span>age 60</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:12px; color:#9aa3ad; margin-bottom:6px;"><span>Population</span><span style="font-family:'JetBrains Mono',monospace;">11 / 15</span></div>
+              <div style="height:7px; background:#1a1e24; border-radius:4px; overflow:hidden;"><div style="width:73%; height:100%; background:linear-gradient(90deg,#e0a13a,#f0c060);"></div></div>
+            </div>
+
+            <div style="flex:1;"></div>
+
+            <!-- economy shelf -->
+            <div style="border:1px dashed #262c33; border-radius:11px; padding:13px; background:#0d1015;">
+              <div style="display:flex; align-items:center; gap:7px; margin-bottom:11px;">
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; color:#6b727b;">UPGRADES</span>
+                <span style="font-size:12px; color:#4c525b;">🔒</span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:9px; opacity:0.5;">
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span>Move speed</span><span style="font-family:'JetBrains Mono',monospace; color:#8b939d;">— EVO</span></div>
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span>Carry +1</span><span style="font-family:'JetBrains Mono',monospace; color:#8b939d;">— EVO</span></div>
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span>Lifespan</span><span style="font-family:'JetBrains Mono',monospace; color:#8b939d;">— EVO</span></div>
+              </div>
+              <div style="font-size:10.5px; color:#5c636c; margin-top:11px; line-height:1.5;">Reserved for the economy update.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- notes A -->
+      <div style="display:flex; gap:14px; margin-top:20px; max-width:1200px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:340px; background:#12151a; border:1px solid #222831; border-radius:10px; padding:16px 18px;">
+          <div style="font-size:13px; color:#e0a13a; font-weight:600; margin-bottom:10px;">Why this works</div>
+          <ul style="margin:0; padding-left:18px; color:#a7afb8; font-size:13.5px; line-height:1.75;">
+            <li>Controls and readout are permanently docked — nothing floats over the play area, so the sim stays legible.</li>
+            <li>Best fit for the planned economy: the right rail already frames an Upgrades shelf and the top bar has EVO/GT slots.</li>
+          </ul>
+        </div>
+        <div style="flex:1; min-width:340px; background:#12151a; border:1px solid #222831; border-radius:10px; padding:16px 18px;">
+          <div style="font-size:13px; color:#e0a13a; font-weight:600; margin-bottom:10px;">Trade-off</div>
+          <ul style="margin:0; padding-left:18px; color:#a7afb8; font-size:13.5px; line-height:1.75;">
+            <li>Two rails narrow the grid more than a full-bleed layout would. Great for a "control room" feel, less for immersion.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- shared change summary -->
+  <div style="max-width:1200px; margin-top:64px; background:#101318; border:1px solid #222831; border-radius:14px; padding:28px 32px;">
+    <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:2px; color:#e0a13a; margin-bottom:18px;">WHAT CHANGED</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px 44px;">
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">01</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Grid reclaims the frame</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">Was a small off-center square in a sea of empty dark. Now centered and enlarged in every layout.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">02</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Pheromones as faded breadcrumbs</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">Kept the per-cell shrinking-square crumbs from the original, but split into two faded hues: blue = home trail, pink = food trail. Each square shrinks and fades with age, so ants (bright discs) never blur into them.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">03</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Ants read as bright dots</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">White / lime / orange discs by state, haloed so they pop above the crumbs — no more blue-on-blue confusion.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">04</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">A real transport bar</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">Play/Pause, single-step, speed 1×/2×/4×, and restart — replacing the lone Pause button.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">05</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Seed surfaced & editable</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">The mulberry32 seed is shown, editable, and re-rollable for reproducible runs.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">06</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Stats integrated + legible</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">Each state row gets an energy bar and count; a population meter shows headroom to the cap. Docked into the frame, not floating loose.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">07</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Hover tooltip, designed</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">Cell coords, terrain, food, both pheromone levels, and ant count — the requested per-cell inspector.</div></div></div>
+      <div style="display:flex; gap:13px;"><span style="font-family:'JetBrains Mono',monospace; color:#e0a13a; font-size:13px; padding-top:1px;">08</span><div><div style="font-weight:600; font-size:14px; margin-bottom:3px;">Economy-ready shell</div><div style="font-size:13px; color:#9aa3ad; line-height:1.6;">EVO / GT currency slots in the top bar and a reserved (locked) Upgrades panel so the idle layer has a home when it lands.</div></div></div>
+    </div>
+  </div>
+
+</div>
+
+<template id="__bundler_thumbnail" data-bg-color="#101216">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#101216"/>
+    <g transform="translate(430,250)">
+      <rect x="140" y="140" width="60" height="60" fill="#e0a13a"/>
+      <rect x="200" y="140" width="60" height="60" fill="#e0a13a"/>
+      <rect x="140" y="200" width="60" height="60" fill="#efb156"/>
+      <rect x="200" y="200" width="60" height="60" fill="#e0a13a"/>
+      <rect x="20" y="60" width="34" height="34" fill="rgba(74,163,255,0.7)"/>
+      <rect x="70" y="100" width="26" height="26" fill="rgba(74,163,255,0.5)"/>
+      <rect x="300" y="240" width="30" height="30" fill="rgba(255,93,176,0.7)"/>
+      <rect x="345" y="285" width="22" height="22" fill="rgba(255,93,176,0.5)"/>
+      <rect x="0" y="0" width="60" height="60" fill="#5aa54a"/>
+      <circle cx="120" cy="120" r="20" fill="#eef2ff"/>
+      <circle cx="300" cy="180" r="18" fill="#b6f36a"/>
+    </g>
+  </svg>
+</template></x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  componentDidMount() {
+    this.scene = this.buildScene();
+    // [canvasId, cellPx]
+    [['cvA', 20]].forEach(([id, cp]) => {
+      const c = document.getElementById(id);
+      if (c) this.drawGrid(c, cp);
+    });
+  }
+
+  buildScene() {
+    const N = 32;
+    // nest 3x3 centered at 16
+    // food clusters
+    const clusters = [ {cx:7, cy:9}, {cx:24, cy:22}, {cx:22, cy:7} ];
+    const foodMap = {};
+    const offs = [[0,0,225],[1,0,165],[0,1,150],[-1,0,95],[1,1,70],[0,-1,120],[-1,1,55],[1,-1,60],[2,0,40]];
+    clusters.forEach(cl => offs.forEach(([dx,dy,a]) => {
+      const x = cl.cx+dx, y = cl.cy+dy;
+      if (x<0||y<0||x>=N||y>=N) return;
+      foodMap[y*N+x] = Math.max(foodMap[y*N+x]||0, a);
+    }));
+    const ants = [
+      // searching (state 0) near nest exploring
+      {x:13,y:14,s:0},{x:19,y:15,s:0},{x:16,y:12,s:0},{x:14,y:19,s:0},{x:20,y:20,s:0},{x:12,y:16,s:0},
+      // carrying (state 1) on/near food
+      {x:7,y:9,s:1},{x:8,y:10,s:1},{x:24,y:22,s:1},{x:22,y:7,s:1},
+      // returning (state 2)
+      {x:20,y:18,s:2}
+    ];
+
+    // ---- breadcrumb trails (discrete crumbs that shrink with age) ----
+    // hue 'home' (blue) or 'food' (pink); v in (0,1]: 1 = fresh (big), low = old (small/faded).
+    const crumbs = [];
+    const addTrail = (a, b, hue) => {
+      const path = this.linePath(a[0], a[1], b[0], b[1]);
+      const L = (path.length - 1) || 1;
+      path.forEach((p, i) => {
+        const v = 0.2 + 0.8 * (i / L);   // origin end (i=0) oldest/smallest, frontier freshest
+        crumbs.push({ x: p[0], y: p[1], v, hue });
+      });
+    };
+    // home trails radiate out from the nest (nest = origin = oldest end)
+    addTrail([16, 16], [11, 12], 'home');
+    addTrail([16, 16], [21, 10], 'home');
+    addTrail([16, 16], [12, 22], 'home');
+    addTrail([16, 16], [21, 21], 'home');
+    // food trails run from each food source toward the nest (food = origin = oldest end)
+    clusters.forEach(cl => addTrail([cl.cx, cl.cy], [16, 16], 'food'));
+
+    return { N, nest:16, clusters, foodMap, ants, crumbs };
+  }
+
+  // 4-connected (orthogonal) path between two cells — matches von Neumann movement
+  linePath(x0, y0, x1, y1) {
+    const path = [[x0, y0]];
+    let x = x0, y = y0, guard = 0;
+    while ((x !== x1 || y !== y1) && guard++ < 200) {
+      if (Math.abs(x1 - x) >= Math.abs(y1 - y) && x !== x1) x += x1 > x ? 1 : -1;
+      else if (y !== y1) y += y1 > y ? 1 : -1;
+      else x += x1 > x ? 1 : -1;
+      path.push([x, y]);
+    }
+    return path;
+  }
+
+  lerp(a, b, t) { return Math.round(a + (b - a) * t); }
+
+  drawGrid(canvas, cp) {
+    const { N, nest, clusters, foodMap, ants } = this.scene;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const size = N * cp;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // background (grid line color shows through insets)
+    ctx.fillStyle = '#0c0e11';
+    ctx.fillRect(0, 0, size, size);
+
+    // empty cells
+    ctx.fillStyle = '#171a1f';
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++)
+        ctx.fillRect(x*cp+1, y*cp+1, cp-1, cp-1);
+
+    const c = (gx, gy) => [gx*cp + cp/2, gy*cp + cp/2];
+
+    // ---- PHEROMONE BREADCRUMBS ----
+    // one crumb per cell: a centered square whose side scales with the marker's
+    // value (shrinks as it decays), tinted by trail (blue home / pink food) and
+    // faded by age. Larger crumb drawn first so an overlapping smaller one stays visible.
+    const nestCells = new Set();
+    for (let y = nest-1; y <= nest+1; y++)
+      for (let x = nest-1; x <= nest+1; x++) nestCells.add(y*N + x);
+
+    const sorted = [...this.scene.crumbs].sort((a, b) => b.v - a.v);
+    sorted.forEach(cr => {
+      if (nestCells.has(cr.y*N + cr.x)) return;     // don't draw over the nest
+      if (foodMap[cr.y*N + cr.x]) return;           // food cell owns its look
+      const side = cp * (0.2 + 0.55 * cr.v);        // shrinking square
+      const px = cr.x*cp + (cp - side) / 2;
+      const py = cr.y*cp + (cp - side) / 2;
+      const alpha = 0.22 + 0.55 * cr.v;             // faded by age
+      const rgb = cr.hue === 'home' ? '74,163,255' : '255,93,176';
+      ctx.shadowColor = `rgba(${rgb},0.6)`;
+      ctx.shadowBlur = cp * 0.35 * cr.v;            // soft faded halo
+      ctx.fillStyle = `rgba(${rgb},${alpha})`;
+      ctx.fillRect(px, py, side, side);
+    });
+    ctx.shadowBlur = 0;
+
+    // ---- SOLID LAYER ----
+    ctx.globalCompositeOperation = 'source-over';
+
+    // food cells (green gradient by amount)
+    for (const key in foodMap) {
+      const idx = +key;
+      const x = idx % N, y = (idx - x) / N;
+      const t = Math.min(1, foodMap[key] / 255);
+      const r = this.lerp(0x2f, 0x8a, t);
+      const gg = this.lerp(0x6b, 0xe0, t);
+      const b = this.lerp(0x3a, 0x84, t);
+      ctx.fillStyle = `rgb(${r},${gg},${b})`;
+      ctx.fillRect(x*cp+1, y*cp+1, cp-1, cp-1);
+    }
+
+    // nest 3x3
+    for (let y = nest-1; y <= nest+1; y++)
+      for (let x = nest-1; x <= nest+1; x++) {
+        ctx.fillStyle = (x===nest && y===nest) ? '#efb156' : '#e0a13a';
+        ctx.fillRect(x*cp+1, y*cp+1, cp-1, cp-1);
+      }
+
+    // ants as bright discs
+    const antColor = { 0:'#eef2ff', 1:'#b6f36a', 2:'#ff9d4d' };
+    ants.forEach(a => {
+      const [px, py] = c(a.x, a.y);
+      const rad = Math.max(3, cp*0.34);
+      // dark halo
+      ctx.beginPath(); ctx.arc(px, py, rad+1.5, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fill();
+      // body
+      ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI*2);
+      ctx.fillStyle = antColor[a.s]; ctx.fill();
+      // specular
+      ctx.beginPath(); ctx.arc(px - rad*0.3, py - rad*0.3, rad*0.34, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fill();
+    });
+
+    // highlight the tooltip target cell (22,7)
+    ctx.strokeStyle = '#e0a13a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(22*cp+0.5, 7*cp+0.5, cp-1, cp-1);
+  }
+
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
