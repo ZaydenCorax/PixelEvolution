@@ -193,6 +193,8 @@ and the `TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
 | `WEIGHT_BASE` / `WEIGHT_TARGET_CELL` | `1` / `50` | Roulette weight floor; bonus for an adjacent goal (food/nest) cell. |
 | `WEIGHT_TRAIL_ON` / `WEIGHT_TRAIL_AGE` | `10` / `20` | On-trail bonus; extra weight scaled by crumb age (bias toward origin). |
 | `WEIGHT_HOMING` | `25` | Fallback nudge toward the nest when no home trail is nearby. |
+| `WEIGHT_FOOD_SENSE` | `25` | Nudge a searching ant toward the nearest food within its sensing footprint. |
+| `FOOD_SENSE_OFFSETS` | 12 cells | A searching ant's smell footprint: the 8 surrounding cells + the 4 cardinal cells two steps out. |
 | `ANT_CARRY_CAPACITY` | `5` | Max food an ant carries before it must drop the load at the nest. |
 | `ANT_STATE` | `SEARCHING 0, CARRYING 1, RETURNING 2, DEAD 255` | Ant state enum, including the named dead sentinel. |
 | `ANT_MOVE_DIRECTIONS` | N,E,S,W | 4-direction (von Neumann) movement set. |
@@ -201,6 +203,7 @@ and the `TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
 | `ANT_ENERGY_COST` | `1` | Energy spent per ant per tick. |
 | `ANT_INITIAL_ENERGY` | `100` | Starting/`max` energy (also the refuel cap). |
 | `ANT_LIFESPAN` | `2000` | Age (ticks) after which an ant dies of old age. |
+| `ANT_LOW_ENERGY_FRACTION` | `0.2` | Fraction of full energy below which an ant heads home (RETURNING) and recovers. |
 | `ANT_POP_CAP` | `15` | Population cap; also the ant-array `capacity`. |
 | `ANT_REFUEL_INTERVAL_TICKS` | `2` | Refuel cadence for an ant sitting on the nest. |
 | `ANT_REFUEL_FOOD_COST` | `1` | Colony food spent per refuel event. |
@@ -288,12 +291,15 @@ Owns ant creation, births, and per-tick behaviour.
 - **`stepAnts(ants, world, resources, tick)`** — the per-tick update for every ant. In order, for
   each live ant it:
   1. Ages it; if `energy <= 0` **or** `age > ANT_LIFESPAN` (2000), marks it `DEAD`.
-  2. **Recover in place:** if the ant is on the nest and below full energy (and the colony has food),
-     it **stays put** — no move, **no energy cost** — and, on a refuel tick (every
+  2. **Recover in place (depleted ants only):** only a **`RETURNING`** ant recovers — a state entered
+     just when energy falls below `ANT_LOW_ENERGY_FRACTION` (20%) of full (step 6). A healthier ant
+     never rests; it keeps foraging. A `RETURNING` ant that is home on the nest and below full energy
+     **stays put** — no move, **no energy cost** — and, on a refuel tick (every
      `ANT_REFUEL_INTERVAL_TICKS`), converts `ANT_REFUEL_FOOD_COST` (1) colony food into
-     `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy (clamped to the cap). It parks like this until full
-     (a fully-recovered `RETURNING` ant flips back to `SEARCHING`) or until the colony runs dry, then
-     resumes. Recovering costs no upkeep, so energy isn't wasted while topping up.
+     `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy (clamped to the cap). It parks like this until **full**,
+     then flips back to `SEARCHING` and leaves. If the colony has no food to spare it doesn't sit idle
+     — it flips to `SEARCHING` and forages so it can go find food itself. Recovering costs no upkeep,
+     so energy isn't wasted while topping up.
   3. Otherwise subtracts `ANT_ENERGY_COST` (1) energy and makes **one** state-weighted move
      (`moveAnt`): searching ants steer toward food, carrying/returning ants steer home. Reverts the
      move if it would leave the grid (ants "bounce" off edges).
@@ -301,14 +307,18 @@ Owns ant creation, births, and per-tick behaviour.
      - **On food** (any state) with spare capacity → picks up food up to `ANT_CARRY_CAPACITY` (5).
        Collecting takes priority over returning, so even a carrying/returning ant tops up en route. A
        `SEARCHING` ant that grabs its first food flips to **CARRYING**.
-     - **On the nest** → drops its **whole load** (up to 5) and a **CARRYING**/**RETURNING** ant
-       becomes **SEARCHING**.
+     - **On the nest** → drops its **whole load** (up to 5). A **CARRYING** ant becomes **SEARCHING**;
+       a **RETURNING** (depleted) ant stays `RETURNING` so it recovers (step 2) before foraging again.
   5. **Lays one breadcrumb** at the destination cell, based on its state *after* the interaction: a
      **CARRYING** ant lays a **food** trail (origin = the food cell where it flipped to CARRYING);
      anyone else (**SEARCHING**/**RETURNING**) lays a **home** trail (origin = the nest). Because
      reaching the nest flips CARRYING → SEARCHING first, an ant **stops laying its food trail the
      moment it gets home**. This continuous laying — one crumb per step — is what builds the trail.
-  6. If a SEARCHING ant's energy is below 20%, switch it to **RETURNING**.
+     **No trail is laid while standing on a nest cell** (home included): otherwise the nest block
+     saturates with home pheromone and the anti-backtracking rule sweeps searching ants outward, away
+     from food sitting next to the nest.
+  6. If a SEARCHING ant's energy is below `ANT_LOW_ENERGY_FRACTION` (20%) of full, switch it to
+     **RETURNING** — this is the sole trigger for heading home to recover (step 2).
   - Finally, **`compactAnts`** removes dead ants by shifting live entries down and updating `count`.
 - **`getWeightedDirs(world, x, y, toNest?)`** — the movement brain. For each of the 4 neighbours it
   computes a weight from named constants, then does **roulette-wheel selection** (via the central RNG)
@@ -328,13 +338,23 @@ Owns ant creation, births, and per-tick behaviour.
     it still converges home without a trail. This is a bias, not an override: roulette still applies.
     A `RETURNING` ant both lays *and* would follow the home trail, so it can't ride its own trail —
     it always uses this geometric homing instead.
+  - *Food sensing.* The forager's analogue of the homing fallback. A SEARCHING ant smells the nearest
+    food cell within a small footprint — the 8 surrounding cells plus the 4 cardinal cells two steps
+    out (`FOOD_SENSE_OFFSETS`, 12 cells) — and adds `WEIGHT_FOOD_SENSE` (25) to whichever neighbours
+    reduce its Manhattan distance to it. This lets an ant **re-lock onto nearby food after the food
+    trail has decayed**, so food next to the nest keeps being harvested instead of being abandoned the
+    first time an ant strays off it. A sensed-food step also overrides anti-backtracking (below).
   - *Anti-backtracking.* An ant **never steps onto a cell that already carries the trail it is
     currently laying** (home for SEARCHING/RETURNING, food for CARRYING): such cells are dropped from
     the candidate set, so the ant moves onto fresh ground instead of re-walking its own trail. Two
-    overrides: a goal cell (food/nest) is never excluded, and a cell that **also** carries the ant's
-    *goal* trail (an overlap of both pheromones) is never excluded — following the trail toward the
-    current objective wins over avoiding the laid one. If avoidance would leave no legal move at all,
-    the full neighbour set is restored (an ant boxed in by its own trail can still move).
+    overrides: a goal cell (food/nest) is never excluded, a cell that **also** carries the ant's
+    *goal* trail (an overlap of both pheromones) is never excluded, and (for a searching ant) a step
+    toward **sensed food** is never excluded — following the trail or scent toward the current
+    objective wins over avoiding the laid one. If avoidance would leave no legal move at all, the full
+    neighbour set is restored (an ant boxed in by its own trail can still move).
+  - *Nest avoidance (searching only).* A SEARCHING ant also excludes **nest cells** — it has no
+    business on the nest while foraging, so it routes around the nest block (and promptly walks off it
+    if it was parked there refuelling). A homing ant is unaffected, since for it the nest is the goal.
 
 *Why weighted-random instead of "always go to the best cell"?* Randomness keeps ants exploring and
 prevents them all funnelling into a single path, which is what makes emergent trail-following look

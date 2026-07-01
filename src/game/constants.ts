@@ -51,6 +51,18 @@ export const WEIGHT_TARGET_CELL = 50; // adjacent goal cell (food when searching
 export const WEIGHT_TRAIL_ON = 10; // bonus for stepping onto the relevant trail at all
 export const WEIGHT_TRAIL_AGE = 20; // extra weight scaled by crumb age → bias toward the trail's origin
 export const WEIGHT_HOMING = 25; // fallback nudge toward the nest when no home trail is nearby
+export const WEIGHT_FOOD_SENSE = 25; // nudge a searching ant toward the nearest food it can smell
+
+// A searching ant's smell footprint: the 8 surrounding cells (Moore neighbourhood)
+// plus the 4 cardinal cells two steps out — 12 cells total, a plus-extended diamond.
+// This lets an ant re-lock onto nearby food after its food trail has decayed, so food
+// sitting next to the nest doesn't get abandoned once an ant strays off it (see ant.ts).
+export const FOOD_SENSE_OFFSETS = [
+  { dx: -1, dy: -1 }, { dx: 0, dy: -1 }, { dx: 1, dy: -1 },
+  { dx: -1, dy: 0 },                     { dx: 1, dy: 0 },
+  { dx: -1, dy: 1 },  { dx: 0, dy: 1 },  { dx: 1, dy: 1 },
+  { dx: 0, dy: -2 }, { dx: 2, dy: 0 }, { dx: 0, dy: 2 }, { dx: -2, dy: 0 },
+] as const;
 
 export const FOOD_SPAWN_RATE = 0.02;
 export const FOOD_SPAWN_AMOUNT = 20;
@@ -62,6 +74,10 @@ export const ANT_INITIAL_ENERGY = 100;
 // way home) until they hit this cap, then drop the whole load at the nest.
 export const ANT_CARRY_CAPACITY = 5;
 export const ANT_LIFESPAN = 2000;
+// Below this fraction of full energy an ant is "depleted": a SEARCHING ant flips to
+// RETURNING (heads home) and only then does it recover on the nest. Above it, an ant
+// never rests — it keeps foraging. Once recovering, it tops up to full before leaving.
+export const ANT_LOW_ENERGY_FRACTION = 0.2;
 
 // Colony self-sustain (see DESIGN.md §8.1). Ants that sit on the nest refuel by
 // spending colony food: every REFUEL_INTERVAL_TICKS an ant converts REFUEL_FOOD_COST

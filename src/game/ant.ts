@@ -10,12 +10,15 @@ import {
   ANT_REFUEL_FOOD_COST,
   ANT_REFUEL_ENERGY_PER_FOOD,
   ANT_CARRY_CAPACITY,
+  ANT_LOW_ENERGY_FRACTION,
   NEST_RADIUS,
   WEIGHT_BASE,
   WEIGHT_TARGET_CELL,
   WEIGHT_TRAIL_ON,
   WEIGHT_TRAIL_AGE,
   WEIGHT_HOMING,
+  WEIGHT_FOOD_SENSE,
+  FOOD_SENSE_OFFSETS,
 } from './constants';
 import type { Ants, World as WorldType } from './types';
 import {
@@ -91,29 +94,35 @@ export function stepAnts(
       continue;
     }
 
-    // Recovering on the nest: an ant that is on the nest and below full energy stays
-    // put — it doesn't move and doesn't burn energy — while it refuels from colony food
-    // (every REFUEL_INTERVAL_TICKS). Staying still means recovery isn't wasted on
-    // movement upkeep. It parks until full (then leaves) or until the colony runs dry.
+    // Recovering on the nest: only a *depleted* ant recovers. An ant becomes RETURNING
+    // when its energy drops below ANT_LOW_ENERGY_FRACTION (20%) of full; a healthier ant
+    // never rests — it keeps foraging. Once a RETURNING ant is home on the nest it parks
+    // (no movement, no energy burn) and refuels from colony food (every
+    // REFUEL_INTERVAL_TICKS), topping up to full before it leaves as a SEARCHING forager.
     const restIdx = getCellIndex(world, ants.x[i], ants.y[i]);
     if (
       world.terrain[restIdx] === TERRAIN.NEST &&
-      ants.energy[i] < ANT_INITIAL_ENERGY &&
-      resources.food >= ANT_REFUEL_FOOD_COST
+      ants.state[i] === ANT_STATE.RETURNING &&
+      ants.energy[i] < ANT_INITIAL_ENERGY
     ) {
-      if (canRefuel) {
-        resources.food -= ANT_REFUEL_FOOD_COST;
-        ants.energy[i] = Math.min(
-          ANT_INITIAL_ENERGY,
-          ants.energy[i] + ANT_REFUEL_ENERGY_PER_FOOD,
-        );
+      if (resources.food >= ANT_REFUEL_FOOD_COST) {
+        if (canRefuel) {
+          resources.food -= ANT_REFUEL_FOOD_COST;
+          ants.energy[i] = Math.min(
+            ANT_INITIAL_ENERGY,
+            ants.energy[i] + ANT_REFUEL_ENERGY_PER_FOOD,
+          );
+        }
+        // Fully recovered → resume foraging; otherwise stay parked and keep refuelling.
+        if (ants.energy[i] >= ANT_INITIAL_ENERGY) {
+          ants.state[i] = ANT_STATE.SEARCHING;
+        }
+        alive++;
+        continue;
       }
-      // A fully-recovered returning ant resumes foraging.
-      if (ants.energy[i] >= ANT_INITIAL_ENERGY && ants.state[i] === ANT_STATE.RETURNING) {
-        ants.state[i] = ANT_STATE.SEARCHING;
-      }
-      alive++;
-      continue;
+      // Colony has no food to spare: don't sit idle waiting to starve — resume foraging
+      // (fall through to normal movement) so the ant can go find food itself.
+      ants.state[i] = ANT_STATE.SEARCHING;
     }
 
     ants.energy[i] -= ANT_ENERGY_COST;
@@ -154,16 +163,15 @@ export function stepAnts(
       }
     }
 
-    // Reaching the nest drops the whole load and ends the trip.
+    // Reaching the nest drops the whole load and ends the trip. A CARRYING ant flips
+    // straight back to SEARCHING; a RETURNING (depleted) ant stays RETURNING so the
+    // recovery block above parks it to refuel first, flipping it to SEARCHING once full.
     if (terrain === TERRAIN.NEST) {
       if (ants.carried[i] > 0) {
         dropFood(world, cx, cy, ants.carried[i]);
         ants.carried[i] = 0;
       }
-      if (
-        ants.state[i] === ANT_STATE.CARRYING ||
-        ants.state[i] === ANT_STATE.RETURNING
-      ) {
+      if (ants.state[i] === ANT_STATE.CARRYING) {
         ants.state[i] = ANT_STATE.SEARCHING;
       }
     }
@@ -173,14 +181,18 @@ export function stepAnts(
     // cell where it flipped to CARRYING); everyone else lays a home trail (origin =
     // the nest). Because reaching the nest flips CARRYING → SEARCHING above, an ant
     // stops laying its food trail the moment it gets home (spec requirement).
+    //
+    // A home trail is NOT laid while standing on the nest: otherwise the whole nest
+    // block saturates with home pheromone, and anti-backtracking (getWeightedDirs)
+    // then sweeps searching ants outward, away from food sitting next to the nest.
     if (ants.state[i] === ANT_STATE.CARRYING) {
       depositPheromone(world, cx, cy, 0, 1);
-    } else {
+    } else if (terrain !== TERRAIN.NEST) {
       depositPheromone(world, cx, cy, 1, 0);
     }
 
     if (
-      ants.energy[i] < ANT_INITIAL_ENERGY * 0.2 &&
+      ants.energy[i] < ANT_INITIAL_ENERGY * ANT_LOW_ENERGY_FRACTION &&
       ants.state[i] === ANT_STATE.SEARCHING
     ) {
       ants.state[i] = ANT_STATE.RETURNING;
@@ -255,6 +267,15 @@ function getWeightedDirs(
   const nest = toNest && !homeTrailNearby ? nestCenter(world) : null;
   const curDist = nest ? Math.abs(x - nest.cx) + Math.abs(y - nest.cy) : 0;
 
+  // Food sensing: a searching ant smells the nearest food within its footprint (see
+  // FOOD_SENSE_OFFSETS) and is nudged toward it. This is the forager's analogue of the
+  // homing fallback — it lets an ant re-lock onto nearby food after the food trail has
+  // decayed, so food next to the nest keeps being exploited instead of abandoned.
+  const foodTarget = !toNest ? nearestSensedFood(world, x, y) : null;
+  const curFoodDist = foodTarget
+    ? Math.abs(x - foodTarget.fx) + Math.abs(y - foodTarget.fy)
+    : 0;
+
   for (let d = 0; d < 4; d++) {
     const nx = x + ANT_MOVE_DIRECTIONS[d].dx;
     const ny = y + ANT_MOVE_DIRECTIONS[d].dy;
@@ -268,6 +289,8 @@ function getWeightedDirs(
     const idx = getCellIndex(world, nx, ny);
     const isGoal = world.terrain[idx] === (toNest ? TERRAIN.NEST : TERRAIN.FOOD);
     let w = WEIGHT_BASE;
+    // A step that carries the ant closer to food it can smell (see foodTarget above).
+    let towardFood = false;
 
     if (isGoal) w += WEIGHT_TARGET_CELL;
 
@@ -284,6 +307,13 @@ function getWeightedDirs(
       if (p > 0) {
         w += WEIGHT_TRAIL_ON + WEIGHT_TRAIL_AGE * (1 - p);
       }
+      if (foodTarget) {
+        const fd = Math.abs(nx - foodTarget.fx) + Math.abs(ny - foodTarget.fy);
+        if (fd < curFoodDist) {
+          w += WEIGHT_FOOD_SENSE;
+          towardFood = true;
+        }
+      }
     } else if (nest) {
       // RETURNING with no followable home trail → pure geometric homing.
       const nd = Math.abs(nx - nest.cx) + Math.abs(ny - nest.cy);
@@ -293,12 +323,19 @@ function getWeightedDirs(
     weights[d] = w;
 
     // Anti-backtracking: exclude cells already carrying the trail this ant is laying —
-    // BUT never a goal cell, and never a cell that also carries the ant's *goal* trail
-    // (an overlap). When trails overlap, following the goal trail wins over avoiding the
-    // laid one, so the ant stays on the trail leading to its current objective.
+    // BUT never a goal cell, never a cell that also carries the ant's *goal* trail (an
+    // overlap), and never a step toward smelled food. When trails overlap, following the
+    // goal trail wins over avoiding the laid one, so the ant stays on the trail leading
+    // to its current objective; sensed food likewise pulls the ant back through its own
+    // home trail instead of letting the avoidance sweep it away.
     const onLaidTrail = layingFood ? world.pheromoneFood[idx] > 0 : world.pheromoneHome[idx] > 0;
     const onGoalTrail = toNest ? world.pheromoneHome[idx] > 0 : world.pheromoneFood[idx] > 0;
-    avoided[d] = onLaidTrail && !isGoal && !onGoalTrail;
+    const backtracking = onLaidTrail && !isGoal && !onGoalTrail && !towardFood;
+    // A searching ant also steers away from the nest — it has no business there while
+    // foraging, so nest cells are excluded (it routes around, or leaves if parked on one).
+    // A homing ant is unaffected: for it the nest is the goal.
+    const avoidNest = !toNest && world.terrain[idx] === TERRAIN.NEST;
+    avoided[d] = backtracking || avoidNest;
   }
 
   if (valid.length === 0) return [randomInt(4)];
@@ -320,6 +357,32 @@ function getWeightedDirs(
   }
 
   return [candidates[candidates.length - 1]];
+}
+
+// The nearest food cell a searching ant can smell from (x, y): scans the sensing
+// footprint (FOOD_SENSE_OFFSETS) and returns the closest cell that is still FOOD with
+// food left, or null if none is in range. Ties resolve to the first offset scanned.
+function nearestSensedFood(
+  world: WorldType,
+  x: number,
+  y: number,
+): { fx: number; fy: number } | null {
+  let best: { fx: number; fy: number } | null = null;
+  let bestDist = Infinity;
+  for (const { dx, dy } of FOOD_SENSE_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (!inBounds(world, nx, ny)) continue;
+    const idx = getCellIndex(world, nx, ny);
+    if (world.terrain[idx] === TERRAIN.FOOD && world.food[idx] > 0) {
+      const dist = Math.abs(dx) + Math.abs(dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { fx: nx, fy: ny };
+      }
+    }
+  }
+  return best;
 }
 
 function compactAnts(ants: Ants, alive: number): void {
