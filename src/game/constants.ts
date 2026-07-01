@@ -14,22 +14,15 @@ export const ANT_STATE = {
   RETURNING: 2,
 } as const;
 
-export const DIRECTIONS = [
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: -1 },
-  { dx: 1, dy: 0 },
-  { dx: 1, dy: 1 },
-  { dx: 0, dy: 1 },
-  { dx: -1, dy: 1 },
-  { dx: -1, dy: 0 },
-  { dx: -1, dy: -1 },
-] as const;
-
+// Ants move in 4 cardinal directions (von Neumann neighbourhood): N, E, S, W.
+// This is deliberately simpler than 8-way (Moore) movement — fewer choices per
+// step keeps ant wandering less noisy and the weighted-direction logic cheaper.
+// `dir` values stored on each ant index into this array.
 export const ANT_MOVE_DIRECTIONS = [
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: 0 },
-  { dx: 0, dy: 1 },
-  { dx: -1, dy: 0 },
+  { dx: 0, dy: -1 }, // 0: North
+  { dx: 1, dy: 0 },  // 1: East
+  { dx: 0, dy: 1 },  // 2: South
+  { dx: -1, dy: 0 }, // 3: West
 ] as const;
 
 export const PHEROMONE_DECAY = 0.995;

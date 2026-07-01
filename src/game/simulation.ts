@@ -42,12 +42,15 @@ export function tick(state: GameState): void {
 }
 
 function collectFoodAtNest(state: GameState): number {
+  // Scan the 3x3 nest block (matching createWorld's nest) and sweep any food
+  // ants have deposited there into the colony's food resource. Keep this range
+  // in sync with the nest size stamped in createWorld.
   const cx = 16;
   const cy = 16;
   let collected = 0;
 
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || nx >= state.world.w || ny < 0 || ny >= state.world.h) continue;

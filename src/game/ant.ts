@@ -28,8 +28,10 @@ export function createAnts(count: number, world: WorldType): Ants {
   const cy = Math.floor(world.h / 2);
 
   for (let i = 0; i < count; i++) {
-    x[i] = cx + randomInt(5) - 2;
-    y[i] = cy + randomInt(5) - 2;
+    // Scatter ants across the 3x3 nest: randomInt(3) - 1 gives an offset of -1..1
+    // on each axis, keeping every ant on a NEST cell (matches the nest in createWorld).
+    x[i] = cx + randomInt(3) - 1;
+    y[i] = cy + randomInt(3) - 1;
     dir[i] = randomInt(4);
     state[i] = ANT_STATE.SEARCHING;
     energy[i] = ANT_INITIAL_ENERGY;

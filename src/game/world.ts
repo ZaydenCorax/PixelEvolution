@@ -19,10 +19,12 @@ export function createWorld(): World {
   const pheromoneHome = new Float32Array(w * h);
   const pheromoneFood = new Float32Array(w * h);
 
+  // Stamp a 3x3 nest of NEST cells centred on the grid (cells 15-17 on each axis).
+  // The -1..1 range gives a 3-wide block; widen the range to grow the nest.
   const cx = 16;
   const cy = 16;
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
       const x = cx + dx;
       const y = cy + dy;
       if (x >= 0 && x < w && y >= 0 && y < h) {
