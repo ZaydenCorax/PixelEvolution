@@ -7,9 +7,16 @@ import {
   PHEROMONE_DECAY,
   PHEROMONE_DECAY_INTERVAL_TICKS,
   PHEROMONE_DIFFUSE_AMOUNT,
+  NEST_RADIUS,
 } from './constants';
 import { World } from './types';
-import { randomInt } from './rng';
+import { randomInt, random } from './rng';
+
+// The nest sits at the grid centre, derived from the world size rather than
+// hardcoded, so it stays correct if the grid is ever resized (grid tiers).
+export function nestCenter(world: Pick<World, 'w' | 'h'>): { cx: number; cy: number } {
+  return { cx: Math.floor(world.w / 2), cy: Math.floor(world.h / 2) };
+}
 
 export function createWorld(): World {
   const w = 32;
@@ -19,12 +26,11 @@ export function createWorld(): World {
   const pheromoneHome = new Float32Array(w * h);
   const pheromoneFood = new Float32Array(w * h);
 
-  // Stamp a 3x3 nest of NEST cells centred on the grid (cells 15-17 on each axis).
-  // The -1..1 range gives a 3-wide block; widen the range to grow the nest.
-  const cx = 16;
-  const cy = 16;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  // Stamp a NEST block of NEST cells centred on the grid. NEST_RADIUS controls the
+  // half-extent (radius 1 → 3x3); widen the constant to grow the nest.
+  const { cx, cy } = nestCenter({ w, h });
+  for (let dy = -NEST_RADIUS; dy <= NEST_RADIUS; dy++) {
+    for (let dx = -NEST_RADIUS; dx <= NEST_RADIUS; dx++) {
       const x = cx + dx;
       const y = cy + dy;
       if (x >= 0 && x < w && y >= 0 && y < h) {
@@ -69,6 +75,11 @@ export function pickupFood(world: World, x: number, y: number, amount: number): 
   const idx = getCellIndex(world, x, y);
   const available = Math.min(amount, world.food[idx]);
   world.food[idx] -= available;
+  // Once a food cell is emptied, revert it to EMPTY terrain so it stops being
+  // drawn/treated as food (keeps terrain in sync with food; DESIGN.md §8.2).
+  if (world.food[idx] === 0 && world.terrain[idx] === TERRAIN.FOOD) {
+    world.terrain[idx] = TERRAIN.EMPTY;
+  }
   return available;
 }
 
@@ -143,13 +154,18 @@ function diffusePheromones(world: World, arr: Float32Array): void {
   }
 }
 
-export function spawnFoodTick(world: World, rng: () => number): void {
-  if (rng() > FOOD_SPAWN_RATE) return;
+export function spawnFoodTick(world: World): void {
+  if (random() > FOOD_SPAWN_RATE) return;
 
   const x = randomInt(world.w);
   const y = randomInt(world.h);
   const idx = getCellIndex(world, x, y);
   if (world.food[idx] < MAX_FOOD_PER_CELL && world.terrain[idx] !== TERRAIN.NEST) {
+    // Mark the cell as FOOD terrain (like spawnFood does) so the renderer draws it
+    // and ants can pick it up — both key off terrain === FOOD (DESIGN.md §8.2).
+    if (world.food[idx] === 0) {
+      world.terrain[idx] = TERRAIN.FOOD;
+    }
     const add = Math.min(FOOD_SPAWN_AMOUNT, MAX_FOOD_PER_CELL - world.food[idx]);
     world.food[idx] += add;
   }

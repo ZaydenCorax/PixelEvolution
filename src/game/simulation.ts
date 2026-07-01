@@ -1,7 +1,16 @@
 import { GameState } from './types';
-import { createWorld, tickPheromones, spawnFoodTick } from './world';
-import { createAnts, stepAnts } from './ant';
-import { STARTING_ANTS, TICK_INTERVAL_MS, TERRAIN } from './constants';
+import { createWorld, tickPheromones, spawnFoodTick, nestCenter } from './world';
+import { createAnts, stepAnts, spawnAnt } from './ant';
+import {
+  STARTING_ANTS,
+  TICK_INTERVAL_MS,
+  MAX_CATCHUP_TICKS,
+  TERRAIN,
+  NEST_RADIUS,
+  ANT_POP_CAP,
+  ANT_REPRODUCE_INTERVAL_TICKS,
+  ANT_REPRODUCE_FOOD_COST,
+} from './constants';
 
 export function createInitialState(): GameState {
   const world = createWorld();
@@ -22,17 +31,26 @@ export function tick(state: GameState): void {
   if (state.paused) return;
   if (state.gameOver) return;
 
-  const rng = Math.random;
-
-  stepAnts(state.ants, state.world);
+  stepAnts(state.ants, state.world, state.resources, state.tick);
   tickPheromones(state.world, state.tick);
-  spawnFoodTick(state.world, rng);
+  spawnFoodTick(state.world);
 
   state.tick++;
 
   if (state.tick % 10 === 0) {
     const foodProduced = collectFoodAtNest(state);
     state.resources.food += foodProduced;
+  }
+
+  // Reproduction (DESIGN.md §8.1): spend colony food to grow the population,
+  // one birth per interval so growth stays gradual.
+  if (
+    state.tick % ANT_REPRODUCE_INTERVAL_TICKS === 0 &&
+    state.resources.food >= ANT_REPRODUCE_FOOD_COST &&
+    state.ants.count < ANT_POP_CAP &&
+    spawnAnt(state.ants, state.world)
+  ) {
+    state.resources.food -= ANT_REPRODUCE_FOOD_COST;
   }
 
   if (state.ants.count === 0) {
@@ -42,15 +60,13 @@ export function tick(state: GameState): void {
 }
 
 function collectFoodAtNest(state: GameState): number {
-  // Scan the 3x3 nest block (matching createWorld's nest) and sweep any food
-  // ants have deposited there into the colony's food resource. Keep this range
-  // in sync with the nest size stamped in createWorld.
-  const cx = 16;
-  const cy = 16;
+  // Scan the nest block (derived from the grid centre, matching createWorld) and
+  // sweep any food ants have deposited there into the colony's food resource.
+  const { cx, cy } = nestCenter(state.world);
   let collected = 0;
 
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  for (let dy = -NEST_RADIUS; dy <= NEST_RADIUS; dy++) {
+    for (let dx = -NEST_RADIUS; dx <= NEST_RADIUS; dx++) {
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || nx >= state.world.w || ny < 0 || ny >= state.world.h) continue;
@@ -87,6 +103,13 @@ export function createSimLoop(onTick: () => void): SimLoop {
     accumulator += delta;
 
     const tickMs = TICK_INTERVAL_MS;
+    // Drop any backlog beyond MAX_CATCHUP_TICKS so a long pause can't trigger a
+    // burst of thousands of ticks in one frame (spiral of death, DESIGN.md §8.10).
+    const maxAccumulated = tickMs * MAX_CATCHUP_TICKS;
+    if (accumulator > maxAccumulated) {
+      accumulator = maxAccumulated;
+    }
+
     while (accumulator >= tickMs) {
       onTick();
       accumulator -= tickMs;

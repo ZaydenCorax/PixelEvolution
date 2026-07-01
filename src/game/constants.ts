@@ -1,5 +1,9 @@
 export const TICK_RATE_HZ = 1;
 export const TICK_INTERVAL_MS = 1000 / TICK_RATE_HZ;
+// Cap how many ticks the sim loop will catch up in a single frame after a pause
+// (e.g. a backgrounded tab), so it can't run thousands of ticks at once — the
+// classic fixed-timestep "spiral of death". Backlog beyond this is dropped.
+export const MAX_CATCHUP_TICKS = 5;
 export const MAX_FOOD_PER_CELL = 255;
 
 export const TERRAIN = {
@@ -12,7 +16,13 @@ export const ANT_STATE = {
   SEARCHING: 0,
   CARRYING: 1,
   RETURNING: 2,
+  // Sentinel for a dead ant awaiting compaction (stored in the state array).
+  DEAD: 255,
 } as const;
+
+// Nest half-extent in cells: radius 1 gives a 3x3 nest around the derived centre.
+// Widen to grow the nest; the centre itself is computed from the grid size.
+export const NEST_RADIUS = 1;
 
 // Ants move in 4 cardinal directions (von Neumann neighbourhood): N, E, S, W.
 // This is deliberately simpler than 8-way (Moore) movement — fewer choices per
@@ -30,8 +40,21 @@ export const PHEROMONE_DECAY_INTERVAL_TICKS = 2;
 export const PHEROMONE_DIFFUSE_AMOUNT = 0.1;
 export const FOOD_SPAWN_RATE = 0.02;
 export const FOOD_SPAWN_AMOUNT = 20;
-export const STARTING_ANTS = 5;
+export const STARTING_ANTS = 3;
 export const STARTING_FOOD = 200;
-export const ANT_ENERGY_COST = 0.5;
+export const ANT_ENERGY_COST = 1;
 export const ANT_INITIAL_ENERGY = 100;
 export const ANT_LIFESPAN = 2000;
+
+// Colony self-sustain (see DESIGN.md §8.1). Ants that sit on the nest refuel by
+// spending colony food: every REFUEL_INTERVAL_TICKS an ant converts REFUEL_FOOD_COST
+// food into REFUEL_ENERGY_PER_FOOD energy, clamped to ANT_INITIAL_ENERGY (energy that
+// would exceed the cap is lost, but the food is still spent). Colony food also funds
+// reproduction: every REPRODUCE_INTERVAL_TICKS, if the colony has at least
+// REPRODUCE_FOOD_COST food and is under POP_CAP, one ant is born.
+export const ANT_POP_CAP = 15;
+export const ANT_REFUEL_INTERVAL_TICKS = 2;
+export const ANT_REFUEL_FOOD_COST = 1;
+export const ANT_REFUEL_ENERGY_PER_FOOD = 10;
+export const ANT_REPRODUCE_INTERVAL_TICKS = 20;
+export const ANT_REPRODUCE_FOOD_COST = 20;

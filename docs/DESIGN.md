@@ -1,14 +1,15 @@
 # PixelEvolution — Design & Architecture
 
 **Audience:** developers new to this codebase (onboarding reference).
-**Status of the game:** early, playable **prototype** (MVP core loop only).
+**Status of the game:** early, playable **prototype** — the core simulation loop is now
+**self-sustaining** (ants refuel and the colony reproduces), but the idle/economy layer is still unbuilt.
 **Status of this document:** describes the code **as it actually exists today**, with a clearly
 separated roadmap for what is planned but not yet built, and an honest list of known gaps.
 
 > How to read this doc: sections 1–6 explain what is really in the repo right now and *why* it is
 > built that way. Section 7 is the future vision. Section 8 is a candid list of rough edges — read
-> it before you trust any single subsystem to "just work." Section 9 is a glossary; if a term looks
-> unfamiliar, jump there first.
+> it before you trust any single subsystem to "just work" — and a log of what was recently resolved.
+> Section 9 is a glossary; if a term looks unfamiliar, jump there first.
 
 ---
 
@@ -16,14 +17,17 @@ separated roadmap for what is planned but not yet built, and an honest list of k
 
 PixelEvolution is a browser game about a colony of pixel "ants" living on a small grid. Ants wander
 the grid looking for food, pick it up, carry it back to a central **nest**, and drop **pheromone**
-trails that bias where other ants walk. The visual style is deliberately Conway's-Game-of-Life-like:
-a crisp square grid of coloured cells drawn on an HTML5 canvas.
+trails that bias where other ants walk. Food collected at the nest is banked as a colony resource
+that keeps ants alive (refuelling) and spawns new ones (reproduction). The visual style is
+deliberately Conway's-Game-of-Life-like: a crisp square grid of coloured cells drawn on an HTML5
+canvas, with a hover tooltip for inspecting individual cells.
 
 The long-term intent (see [`.kilo/plans/game-design.md`](../.kilo/plans/game-design.md)) is an
 **idle / incremental** game — gather resources, buy upgrades, expand territory, and "prestige" for
 permanent bonuses. **None of that economy layer exists yet.** What is implemented today is the
-foundational simulation: a world, ants, pheromones, food, a fixed-rate tick loop, canvas rendering,
-and a minimal Svelte UI (menu → playing → game over).
+foundational simulation: a world, ants, pheromones, food, a self-sustaining energy/reproduction
+loop, a fixed-rate tick loop, canvas rendering with a responsive resize + hover overlay, and a
+minimal Svelte UI (menu → playing → game over).
 
 ### The three plan documents (and how they relate to reality)
 
@@ -33,9 +37,9 @@ history, not as the source of truth — this document is the current reference.
 
 | Plan file | What it is | Relationship to the code |
 |---|---|---|
-| `initial-game-design.md` | The MVP scope ("ants walk, find food, bring it home") | **Closest to reality.** The current code is roughly this. |
+| `initial-game-design.md` | The MVP scope ("ants walk, find food, bring it home") | **Closest to reality.** The current code is roughly this, plus a self-sustaining energy/reproduction loop. |
 | `game-design.md` | The grand vision (economy, upgrades, prestige, grid tiers, save/load) | **Mostly unbuilt** — aspirational roadmap. |
-| `grid-design.md` | A generic, framework-agnostic spec for a reusable canvas grid + interaction overlay | **Partly built** — the canvas rendering exists; the interaction overlay does not. |
+| `grid-design.md` | A generic, framework-agnostic spec for a reusable canvas grid + interaction overlay | **Partly built** — canvas rendering, a `ResizeObserver`, and a hover/tooltip overlay exist; click/selection actions do not. |
 
 Where the code deliberately diverges from those plans (for example 4-directional movement and a 3×3
 nest), this document treats the code as correct and explains the reasoning.
@@ -51,7 +55,7 @@ nest), this document treats the code as correct and explains the reasoning.
 | Build tool | Vite 6 | [`vite.config.ts`](../vite.config.ts). Dev server auto-opens the browser. |
 | Rendering | HTML5 Canvas 2D | Via `ImageData` pixel writes — see [§5.4](#54-rendering). |
 | State | Plain-TS store module | [`src/stores/gameStore.ts`](../src/stores/gameStore.ts) — *not* a Svelte store. |
-| Tests | Vitest (unit) + Playwright (E2E) | Only placeholder tests exist today ([`tests/`](../tests/)). |
+| Tests | Vitest (unit) + Playwright (E2E) | Real unit tests cover the pure `game/` layer ([`tests/`](../tests/)); the Playwright E2E test is still a placeholder. |
 
 **Runtime dependencies: only Svelte.** Everything else (Vite, TypeScript, ESLint, Playwright, etc.)
 is a dev dependency. There is no UI component library; all CSS is hand-written. This keeps the
@@ -97,24 +101,26 @@ canvas; the renderer draws from the simulation's data; Svelte only owns the surr
                    ┌──────────────────────────────┐   ┌───────────────────────────┐
                    │        game/ (pure TS)        │   │        render/            │
                    │  simulation.ts  (tick loop)   │   │  renderer.ts  (canvas)    │
-                   │  world.ts       (grid state)  │   │  palette.ts   (colours*)  │
+                   │  world.ts       (grid state)  │   │  palette.ts   (colours)   │
                    │  ant.ts         (agents)      │   └───────────────────────────┘
                    │  constants.ts   (tuning)      │
-                   │  types.ts       (data shapes) │        * palette.ts is currently
-                   │  rng.ts         (randomness)  │          unused — see §8.
+                   │  types.ts       (data shapes) │
+                   │  rng.ts         (randomness)  │
                    └──────────────────────────────┘
 ```
 
 **Why this split?**
 
 - **`game/` is pure and framework-free.** It has no imports from Svelte or the DOM. That means the
-  entire simulation can be unit-tested in isolation, reused with a different renderer, or run
-  head-less. It also keeps the per-tick hot loop free of any framework reactivity overhead.
+  entire simulation can be unit-tested in isolation (see [`tests/`](../tests/)), reused with a
+  different renderer, or run head-less. It also keeps the per-tick hot loop free of any framework
+  reactivity overhead.
 - **The renderer reads state; it does not own it.** Every frame it is handed the current `World` and
   `Ants` and paints them. It is a "dumb" projection of state onto pixels.
-- **Svelte owns only the shell.** Which screen is showing, the HUD numbers, the stats table — the
-  reactive, human-facing parts. The high-frequency simulation deliberately lives *outside* Svelte's
-  reactivity system.
+- **Svelte owns only the shell.** Which screen is showing, the HUD numbers, the stats table, the
+  hover tooltip — the reactive, human-facing parts. The high-frequency simulation deliberately lives
+  *outside* Svelte's reactivity system, and the UI observes it via an explicit subscription
+  ([§4.9](#49-storesgamestorets--lifecycle-glue)).
 
 ### 3.2 Data-oriented design: typed arrays + Structure-of-Arrays
 
@@ -143,6 +149,11 @@ energy[  99.5 , 100.0 ,  42.0 , ... ]   Float32Array
 age  [    3   ,   3   ,   3   , ... ]   Uint32Array
 ```
 
+The `Ants` struct additionally carries two scalars: **`count`** (the number of live ants, always the
+dense prefix `[0, count)`) and **`capacity`** (the allocated length of every array). The arrays are
+allocated once to `capacity` (= `ANT_POP_CAP`) so that ants born later via reproduction have room
+without reallocating — see [§4.5](#45-gameantts--the-agents).
+
 **Why SoA and typed arrays?**
 
 - **Cache efficiency.** Iterating one field over all ants walks contiguous memory, which is friendly
@@ -154,7 +165,7 @@ age  [    3   ,   3   ,   3   , ... ]   Uint32Array
   planned grid tiers reach 160×160 (~26k cells).
 
 The trade-off is ergonomics: there is no `ant.x`, only `ants.x[i]`, and "deleting" an ant means
-compacting the arrays (see [§4.2](#42-the-ant-step-antts)).
+compacting the arrays (see [§4.5](#45-gameantts--the-agents)).
 
 ---
 
@@ -164,43 +175,81 @@ Each subsection covers one file: what it owns, its notable functions, and a *why
 
 ### 4.1 `game/constants.ts` — tuning knobs
 
-All simulation numbers live in one place: grid tick rate, pheromone decay, food spawn rate, ant
-energy/lifespan, the `TERRAIN` and `ANT_STATE` enums, and `ANT_MOVE_DIRECTIONS`.
+All simulation numbers live in one place: tick rate, catch-up cap, pheromone decay/diffusion, food
+spawn, ant energy/lifespan, colony self-sustain (refuel + reproduction), nest geometry, and the
+`TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
 
-**Notable:** `ANT_MOVE_DIRECTIONS` is the **4-direction** (N, E, S, W — "von Neumann") movement set.
-An ant's `dir` field is an index into this array. *Why 4 and not 8?* Fewer choices per step make ant
-paths less jittery and keep the weighted-direction maths cheaper; this superseded an earlier
-"8-directional (Moore)" decision from the plans (the unused 8-direction array has been removed).
+**Notable constants (current values):**
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `TICK_RATE_HZ` / `TICK_INTERVAL_MS` | `1` / `1000` | One logical tick per second. |
+| `MAX_CATCHUP_TICKS` | `5` | Max ticks the sim loop will replay in one frame after a pause ([§4.6](#46-gamesimulationts--the-orchestrator-and-clock)). |
+| `MAX_FOOD_PER_CELL` | `255` | Per-cell food clamp (matches `Uint8Array`). |
+| `NEST_RADIUS` | `1` | Nest half-extent → a 3×3 block around the derived centre. |
+| `ANT_STATE` | `SEARCHING 0, CARRYING 1, RETURNING 2, DEAD 255` | Ant state enum, including the named dead sentinel. |
+| `ANT_MOVE_DIRECTIONS` | N,E,S,W | 4-direction (von Neumann) movement set. |
+| `STARTING_ANTS` | `3` | Ants at colony start. |
+| `STARTING_FOOD` | `200` | Food scattered on the grid at start. |
+| `ANT_ENERGY_COST` | `1` | Energy spent per ant per tick. |
+| `ANT_INITIAL_ENERGY` | `100` | Starting/`max` energy (also the refuel cap). |
+| `ANT_LIFESPAN` | `2000` | Age (ticks) after which an ant dies of old age. |
+| `ANT_POP_CAP` | `15` | Population cap; also the ant-array `capacity`. |
+| `ANT_REFUEL_INTERVAL_TICKS` | `2` | Refuel cadence for an ant sitting on the nest. |
+| `ANT_REFUEL_FOOD_COST` | `1` | Colony food spent per refuel event. |
+| `ANT_REFUEL_ENERGY_PER_FOOD` | `10` | Energy gained per refuel event (clamped to the cap). |
+| `ANT_REPRODUCE_INTERVAL_TICKS` | `20` | How often the colony may spawn a new ant. |
+| `ANT_REPRODUCE_FOOD_COST` | `20` | Colony food spent per birth. |
+
+*Why 4 directions and not 8?* Fewer choices per step make ant paths less jittery and keep the
+weighted-direction maths cheaper; this superseded an earlier "8-directional (Moore)" decision from
+the plans.
 
 ### 4.2 `game/types.ts` — data shapes
 
 Defines the `World`, `Ants`, and `GameState` interfaces (the typed-array layouts from
-[§3.2](#32-data-oriented-design-typed-arrays--structure-of-arrays)). `GameState` bundles everything
-the simulation needs: `tick`, `resources.food`, the `world`, the `ants`, and the `gameOver` / `paused`
+[§3.2](#32-data-oriented-design-typed-arrays--structure-of-arrays)). `Ants` includes both `count`
+(live ants) and `capacity` (allocated length). `GameState` bundles everything the simulation needs:
+`tick`, `resources.food`, the `world`, the `ants`, and the `gameOver` / `gameOverReason` / `paused`
 flags.
 
-> ⚠️ This file *also* re-declares `AntState` and `Terrain` constants that duplicate `ANT_STATE` and
-> `TERRAIN` in `constants.ts`. They are effectively unused — the real code imports from
-> `constants.ts`. See [§8](#8-known-issues-gaps--inconsistencies).
+This file defines **only data shapes** — the `ANT_STATE` and `TERRAIN` enums live solely in
+`constants.ts` (the single source of truth). The previously duplicated `AntState` / `Terrain`
+declarations have been removed.
 
-### 4.3 `game/rng.ts` — randomness
+### 4.3 `game/rng.ts` — centralised, injectable randomness
 
-A single helper, `randomInt(max)`, returning `0..max-1` via `Math.random()`. *Why isolate it?* So a
-seeded/deterministic RNG could later be swapped in (needed for reproducible saves/replays). Note this
-goal isn't fully met today — other files call `Math.random()` directly ([§8](#8-known-issues-gaps--inconsistencies)).
+All simulation randomness flows through this module rather than calling `Math.random()` directly.
+
+- **`random()`** — a float in `[0, 1)` from the active source.
+- **`randomInt(max)`** — an integer in `[0, max)` from the active source.
+- **`setRandomSource(fn)` / `resetRandomSource()`** — swap the active source, or restore the default.
+- **`createSeededRandom(seed)`** — a deterministic **mulberry32** PRNG: the same seed yields the same
+  stream. Pass its result to `setRandomSource` for a fully reproducible run.
+
+The **default** source is a mulberry32 generator seeded from the clock (`Date.now()`): a
+deterministic engine with a fresh stream each load. *Why centralise?* So reproducible saves,
+replays, and deterministic tests are possible by injecting a fixed seed — `world.ts` and `ant.ts`
+now draw exclusively from `random()` / `randomInt()`.
 
 ### 4.4 `game/world.ts` — the grid
 
 Owns the grid and everything that happens to cells. Key functions:
 
-- **`createWorld()`** — allocates the four typed arrays for a **32×32** grid, stamps a **3×3 nest**
-  centred at cell (16, 16) (so cells 15–17 on each axis), and scatters `STARTING_FOOD` (200) units of
-  food across non-nest cells.
-- **`spawnFood(...)`** (internal, used at startup) — randomly deposits food; importantly it sets a
-  cell's `terrain` to `FOOD` when it first drops food there.
-- **`spawnFoodTick(...)`** — the per-tick natural food spawn (2% chance). ⚠️ Unlike `spawnFood`, this
-  does **not** set `terrain = FOOD`, which is a real bug — see [§8](#8-known-issues-gaps--inconsistencies).
+- **`nestCenter(world)`** — derives the nest centre from the grid size (`⌊w/2⌋, ⌊h/2⌋`) rather than
+  hardcoding it, so the nest stays correct if the grid is ever resized. Used by `createWorld`,
+  `ant.ts`, and `simulation.ts` so they can't drift out of sync.
+- **`createWorld()`** — allocates the four typed arrays for a **32×32** grid, stamps a nest of
+  `NEST_RADIUS`-extent (3×3) at the derived centre, and scatters `STARTING_FOOD` (200) units of food
+  across non-nest cells.
+- **`spawnFood(...)`** (internal, used at startup) — randomly deposits food, setting a cell's
+  `terrain` to `FOOD` when it first drops food there.
+- **`spawnFoodTick(world)`** — the per-tick natural food spawn (2% chance). Like `spawnFood`, it
+  sets **`terrain = FOOD`** on a newly-seeded cell, so naturally-spawned food is both drawn and
+  harvestable. Draws its randomness from the centralised RNG.
 - **`pickupFood` / `dropFood`** — move food between an ant and a cell, clamped to `[0, 255]`.
+  `pickupFood` also reverts an emptied cell to **`EMPTY`** terrain, so depleted food stops being
+  drawn/treated as food.
 - **`depositPheromone`** — adds to a cell's home/food pheromone, clamped to `1`.
 - **`tickPheromones(world, tick)`** — every `PHEROMONE_DECAY_INTERVAL_TICKS` (2) ticks, multiplies
   all pheromones by `PHEROMONE_DECAY` (0.995), then diffuses them.
@@ -212,60 +261,86 @@ Owns the grid and everything that happens to cells. Key functions:
 what turns individual ant deposits into smooth gradients other ants can follow — the core of
 ant-colony-style pathfinding.
 
+*Why keep `terrain` and `food` in sync?* Both the renderer and the ant pickup logic key off
+`terrain === FOOD`. Setting the terrain when food appears and clearing it when food is exhausted
+keeps that single flag authoritative.
+
 ### 4.5 `game/ant.ts` — the agents
 
-Owns ant creation and per-tick behaviour.
+Owns ant creation, births, and per-tick behaviour.
 
-- **`createAnts(count, world)`** — allocates the SoA arrays and scatters `count` ants across the 3×3
-  nest (offset `-1..1` on each axis), each starting `SEARCHING` with full energy (100) and age 0.
-- **`stepAnts(ants, world)`** — the per-tick update for every ant. In order, for each live ant it:
-  1. Ages it; if `energy <= 0` **or** `age > ANT_LIFESPAN` (2000), marks it dead (`state = 255`).
-  2. Subtracts `ANT_ENERGY_COST` (0.5) energy.
-  3. Moves it (`moveAnt`), reverting if the move would leave the grid (ants "bounce" off edges).
+- **`createAnts(count, world)`** — allocates the SoA arrays to `capacity = max(count, ANT_POP_CAP)`
+  and seeds `count` ants via `spawnAnt`. `count` tracks the live prefix.
+- **`spawnAnt(ants, world)`** — appends one fresh ant on a random nest cell (scattered across the
+  nest block, each `SEARCHING`, full energy, age 0) if there is capacity; returns `false` when full.
+  Used both at startup and for reproduction.
+- **`stepAnts(ants, world, resources, tick)`** — the per-tick update for every ant. In order, for
+  each live ant it:
+  1. Ages it; if `energy <= 0` **or** `age > ANT_LIFESPAN` (2000), marks it `DEAD`.
+  2. Subtracts `ANT_ENERGY_COST` (1) energy.
+  3. Makes **one** state-weighted move (`moveAnt`): searching ants steer toward food, carrying/
+     returning ants steer home. Reverts the move if it would leave the grid (ants "bounce" off edges).
   4. Interacts with the destination cell based on state:
      - **SEARCHING** on a food cell → pick up 1 food, become **CARRYING**, lay food pheromone (0.3).
-     - **CARRYING** on the nest → drop food, become **SEARCHING**, lay home pheromone (0.2); otherwise
-       take a second step biased toward home (`followPheromoneHome`).
-     - **RETURNING** on the nest → become **SEARCHING**, lay home pheromone; otherwise follow home.
-  5. If a SEARCHING ant's energy drops below 20% (20), switches it to **RETURNING**.
+     - **CARRYING** on the nest → drop 1 food, become **SEARCHING**, lay home pheromone (0.2).
+     - **RETURNING** on the nest → become **SEARCHING**, lay home pheromone (0.2).
+  5. **Refuel:** if the ant is on the nest, `tick` is a refuel tick (every `ANT_REFUEL_INTERVAL_TICKS`),
+     the colony has food, and the ant is below the cap, spend `ANT_REFUEL_FOOD_COST` (1) colony food
+     to add `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy, clamped to `ANT_INITIAL_ENERGY` (surplus energy
+     is lost, but the food is still spent).
+  6. If a SEARCHING ant's energy is still below 20% after refuel, switch it to **RETURNING**.
   - Finally, **`compactAnts`** removes dead ants by shifting live entries down and updating `count`.
 - **`getWeightedDirs(world, x, y, preferHome?)`** — the movement brain. For each of the 4 neighbours
   it computes a weight: base `1`, `+50` if the cell is food, `+ pheromoneFood * 20`, and (when
-  returning home) `+ pheromoneHome * 30`. It then does **roulette-wheel selection** — pick a direction
-  with probability proportional to its weight. *Why weighted-random instead of "always go to the best
-  cell"?* Randomness keeps ants exploring and prevents them all funnelling into a single path, which
-  is what makes emergent trail-following look organic.
+  `preferHome`) `+ pheromoneHome * 30`. It then does **roulette-wheel selection** (via the central
+  RNG) — pick a direction with probability proportional to its weight. *Why weighted-random instead
+  of "always go to the best cell"?* Randomness keeps ants exploring and prevents them all funnelling
+  into a single path, which is what makes emergent trail-following look organic.
 
-> ⚠️ Carrying/returning ants effectively move **twice** per tick (once in `moveAnt`, once in
-> `followPheromoneHome`), and the cell interaction is only checked after the first move. This is a
-> quirk, not intended design — see [§8](#8-known-issues-gaps--inconsistencies).
+*Ants move exactly once per tick.* Movement weighting is chosen up front from the ant's state, so a
+single `moveAnt` call both steers correctly and interacts with the right cell — carrying/returning
+ants no longer take a hidden second, un-bounds-checked step.
 
 ### 4.6 `game/simulation.ts` — the orchestrator and clock
 
 Ties the world and ants together and drives time.
 
-- **`createInitialState()`** — builds a fresh `GameState` (world + 5 ants + zeroed resources).
-- **`tick(state)`** — one logical step: `stepAnts` → `tickPheromones` → `spawnFoodTick` → increment
-  `tick` → every 10 ticks sweep food out of the nest into `resources.food` (`collectFoodAtNest`) →
-  if `ants.count === 0`, set `gameOver` with reason `"Colony collapsed"`.
-- **`createSimLoop(onTick)`** — the **fixed-timestep accumulator** loop. It runs on
-  `requestAnimationFrame`, accumulates real elapsed milliseconds, and calls `onTick` once per whole
-  `TICK_INTERVAL_MS` (1000 ms) of accumulated time. *Why fixed-timestep?* It decouples simulation
-  speed from the display's frame rate, so the game runs the same whether the monitor is 60 Hz or
-  144 Hz, and it can "catch up" if a frame is delayed. (Caveat: there's no upper bound on catch-up —
-  see [§8](#8-known-issues-gaps--inconsistencies).)
+- **`createInitialState()`** — builds a fresh `GameState` (world + `STARTING_ANTS` (3) ants + zeroed
+  resources).
+- **`tick(state)`** — one logical step (no-op while `paused` or `gameOver`):
+  1. `stepAnts(ants, world, resources, tick)` — move/interact/refuel every ant.
+  2. `tickPheromones(world, tick)` — decay + diffuse (every 2 ticks).
+  3. `spawnFoodTick(world)` — 2% chance to seed food.
+  4. `tick++`.
+  5. Every 10 ticks: sweep food out of the nest into `resources.food` (`collectFoodAtNest`, which
+     scans the nest block derived from `nestCenter`).
+  6. **Reproduction:** every `ANT_REPRODUCE_INTERVAL_TICKS` (20) ticks, if `resources.food >=`
+     `ANT_REPRODUCE_FOOD_COST` (20) and `ants.count < ANT_POP_CAP` (15), spawn one ant and spend the
+     food.
+  7. If `ants.count === 0`, set `gameOver` with reason `"Colony collapsed"`.
+- **`createSimLoop(onTick)`** — the **fixed-timestep accumulator** loop on `requestAnimationFrame`.
+  It banks real elapsed milliseconds and calls `onTick` once per whole `TICK_INTERVAL_MS` (1000 ms).
+  Before draining the accumulator it **clamps the backlog to `MAX_CATCHUP_TICKS` (5)** worth of time,
+  so a long pause (e.g. a backgrounded tab) can't trigger a burst of thousands of ticks in one frame
+  (the classic "spiral of death"). *Why fixed-timestep?* It decouples simulation speed from the
+  display's frame rate, so the game runs the same on a 60 Hz or 144 Hz monitor and can catch up after
+  a delayed frame.
 
 ### 4.7 `render/renderer.ts` — canvas painter
 
-Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, and `destroy`.
+Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, `clientToCell`, and `destroy`.
 
 - **`resize(w, h)`** — computes an integer `cellSize` from the container's smaller dimension divided
-  by the grid size (minimum 8 px), creates a `<canvas>`, handles high-DPI screens via
-  `devicePixelRatio`, and allocates an `ImageData` buffer. The canvas background is `#2a2a2a`.
+  by the grid size (minimum 8 px), and (re)sizes a **reused** `<canvas>` element, handling high-DPI
+  screens via `devicePixelRatio`, and allocates an `ImageData` buffer. Reusing the canvas across
+  calls makes it cheap for the `ResizeObserver` to invoke on every container resize. The canvas
+  background is `#2a2a2a`.
 - **`draw(world, ants)`** — writes directly into the `ImageData` pixel buffer: each cell is coloured
   by terrain (empty grey, nest amber, food a green gradient by amount), then tinted by any pheromone
-  present, then ants are drawn as small centred squares coloured by state. One `putImageData` blits
-  the frame.
+  present, then ants are drawn as small centred squares coloured by state. All colours come from
+  `PALETTE` ([§4.8](#48-renderpalettets--colour-constants)). One `putImageData` blits the frame.
+- **`clientToCell(clientX, clientY)`** — maps a viewport (pointer) coordinate to a grid cell, or
+  `null` if outside the canvas. This is what powers the hover tooltip.
 
 **Two techniques worth understanding:**
 
@@ -277,36 +352,42 @@ Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, and `destroy`.
 
 ### 4.8 `render/palette.ts` — colour constants
 
-Defines a `PALETTE` object of named RGBA colours (empty, nest, food, pheromones, ant states).
-
-> ⚠️ **Currently unused.** `renderer.ts` hardcodes its own RGB values inline instead of importing
-> `PALETTE`. This is dead code / a second source of truth — see [§8](#8-known-issues-gaps--inconsistencies).
+Defines a `PALETTE` object of named RGBA colours (empty, nest, food low/high, pheromones, ant
+states). **`renderer.ts` imports and uses `PALETTE`** as its single source of truth for colour — the
+food gradient is a `lerp` between `foodLow` and `foodHigh`, and pheromone tinting / ant colours read
+their channels from the palette.
 
 ### 4.9 `stores/gameStore.ts` — lifecycle glue
 
 The bridge between the pure simulation and the UI. `createGameStore(container)` wires up:
 
 - the `GameState`, a `Renderer`, and a set of subscriber callbacks;
+- a **`ResizeObserver`** on the container that re-fits and redraws the canvas whenever the container/
+  window changes size (it also fires once on observe to fit the initial size);
 - an **`onTick`** callback that advances the simulation, redraws the canvas, and notifies subscribers;
 - a public API: getters (`state`, `paused`, `gameOver`, `gameOverReason`), `togglePause`, `start`,
-  `stop`, `startNewGame`, and `subscribe`.
+  `stop`, `startNewGame`, `subscribe`, **`cellAt(clientX, clientY)`** (delegates to the renderer's
+  `clientToCell`, for hover), and **`destroy()`** (stops the loop, disconnects the observer, tears
+  down the renderer, clears listeners).
 
 *Why a plain-TS store instead of a Svelte store?* The simulation ticks ~every second and mutates big
 typed arrays in place; funnelling that through Svelte's reactivity would be wasteful. The store keeps
-the imperative loop plain and lets Svelte observe only what it needs.
-
-> ⚠️ The `subscribe`/`notify` observer API exists but `App.svelte` doesn't currently call
-> `subscribe` — see [§8](#8-known-issues-gaps--inconsistencies).
+the imperative loop plain and exposes an explicit `subscribe` API for the UI to observe.
 
 ### 4.10 `App.svelte` — the UI shell
 
 The only Svelte component. It:
 
 - holds a `screen` state (`'menu' | 'playing' | 'gameover'`) and the `store`;
-- on mount, creates the store, seeds a game, and stops the loop so the menu shows a static world;
-- reacts to `store.gameOver` via `$effect` to flip to the game-over screen;
-- exposes derived HUD values (`food`, `population`, `tick`) and a **derived stats table** that, each
-  update, tallies living ants by state with average energy and age;
+- on mount, creates the store, **subscribes** to it (each notify bumps a reactive `version` counter),
+  seeds a game, and stops the loop so the menu shows a static world; on teardown it unsubscribes and
+  calls `store.destroy()`;
+- drives all live values off `version`, so the HUD (`food`, `population`, `tick`), the derived stats
+  table (living ants by state with average energy/age), the game-over transition, and the hover
+  tooltip all recompute each tick without relying on Svelte proxying the in-place array mutations;
+- renders a **hover overlay** over the world: `mousemove` maps the cursor to a cell via
+  `store.cellAt`, and a floating **tooltip** shows that cell's coordinates, terrain, food amount,
+  both pheromone levels, and how many ants are on it;
 - renders the menu, the in-game HUD + world container + stats panel, or the game-over card.
 
 `main.ts` is a three-line bootstrap that mounts `App` into `#app` from `index.html`.
@@ -322,8 +403,10 @@ index.html loads /src/main.ts
    └─ mount(App)
         └─ App onMount:
              ├─ createGameStore(container)
-             │    ├─ createInitialState()  → 32×32 world, 3×3 nest @ (16,16), 200 food, 5 ants
-             │    └─ createRenderer(container) → resize() → draw()   (static first frame)
+             │    ├─ createInitialState()  → 32×32 world, 3×3 nest @ centre, 200 food, 3 ants
+             │    ├─ createRenderer(container) → resize() → draw()   (static first frame)
+             │    └─ ResizeObserver.observe(container)  (keeps the canvas fitted)
+             ├─ store.subscribe(() => version++)   (explicit reactive bridge)
              ├─ store.startNewGame()   (starts the loop…)
              └─ store.stop()           (…then stops it, so the menu is paused)
 ```
@@ -333,30 +416,39 @@ The player sees the menu overlaid on a static initial frame. Clicking **Start** 
 
 ### 5.2 One tick, end to end
 
-Once running, `createSimLoop` calls `onTick` once per second of accumulated time. `onTick` →
-`tick(state)` → `renderer.draw(...)` → `notify()`. The `tick(state)` pipeline:
+Once running, `createSimLoop` calls `onTick` once per second of accumulated time (bounded by
+`MAX_CATCHUP_TICKS`). `onTick` → `tick(state)` → `renderer.draw(...)` → `notify()` (→ `version++`).
+The `tick(state)` pipeline:
 
 ```
 tick(state):
-  1. stepAnts(ants, world)          // move every ant, pick up / drop food, lay pheromones,
-                                     //   age & energy, mark deaths, compact the arrays
-  2. tickPheromones(world, tick)    // every 2 ticks: decay ×0.995, then diffuse
-  3. spawnFoodTick(world, rng)      // 2% chance: add 20 food somewhere
-  4. tick++                          // advance the clock
-  5. if tick % 10 == 0:             // every 10 ticks:
+  1. stepAnts(ants, world, resources, tick)   // move once, pick up / drop food, lay pheromones,
+                                               //   age & energy, refuel on the nest (costs food),
+                                               //   mark deaths, compact the arrays
+  2. tickPheromones(world, tick)               // every 2 ticks: decay ×0.995, then diffuse
+  3. spawnFoodTick(world)                       // 2% chance: seed 20 food (sets FOOD terrain)
+  4. tick++                                      // advance the clock
+  5. if tick % 10 == 0:                         // every 10 ticks:
         resources.food += collectFoodAtNest(state)   // sweep food out of the nest
-  6. if ants.count == 0:            // extinction check
+  6. if tick % 20 == 0 and food >= 20 and count < 15:  // reproduction:
+        spawnAnt(); resources.food -= 20              //   one birth per interval
+  7. if ants.count == 0:                        // extinction check
         gameOver = true, reason = "Colony collapsed"
 ```
+
+**The self-sustaining loop:** foragers carry food to the nest → `collectFoodAtNest` banks it in
+`resources.food` → that pool both **refuels** ants that sit on the nest (keeping them alive) and
+**funds reproduction** (growing the colony toward the population cap). Refuel and reproduction draw
+from the *same* pool, so a colony that can't forage enough will shrink and eventually collapse.
 
 ### 5.3 The ant state machine
 
 ```
                  pick up food (on food cell)
    ┌──────────┐ ─────────────────────────────► ┌──────────┐
-   │SEARCHING │                                 │ CARRYING │
+   │SEARCHING │                                │ CARRYING │
    │   (0)    │ ◄───────────────────────────── │   (1)    │
-   └──────────┘   drop food (reached nest)      └──────────┘
+   └──────────┘   drop food (reached nest)     └──────────┘
         │  ▲                                          │
  energy │  │ reached nest                             │ (both CARRYING and RETURNING
  < 20%  │  │ (become SEARCHING)                       │  head home via home pheromone)
@@ -366,14 +458,16 @@ tick(state):
    │   (2)    │
    └──────────┘
 
+   Any ant sitting on the nest refuels (spends colony food for energy, every 2 ticks).
    Any state → DEAD (255) when energy <= 0 or age > 2000; removed by compaction.
 ```
 
 ### 5.4 Rendering
 
 Rendering is **imperative and outside Svelte**: `onTick` calls `renderer.draw()` directly every tick,
-so the canvas animates regardless of framework reactivity. Svelte only re-renders the HUD/stats text
-when its derived values change.
+so the canvas animates regardless of framework reactivity. The `ResizeObserver` re-fits and redraws
+on container/window resize. Svelte only re-renders the HUD/stats/tooltip text when the `version`
+counter (bumped on each store notify) changes.
 
 ---
 
@@ -381,15 +475,19 @@ when its derived values change.
 
 | Decision | Why | Trade-off / cost |
 |---|---|---|
-| **Pure `game/` layer, no framework imports** | Testable, reusable, fast hot loop | UI must bridge to it manually (the store). |
+| **Pure `game/` layer, no framework imports** | Testable, reusable, fast hot loop | UI must bridge to it manually (the store + `version` counter). |
 | **Typed arrays + Structure-of-Arrays** | Cache-friendly, no per-tick allocation, compact | Clunky ergonomics; deletion needs array compaction. |
-| **Fixed-timestep accumulator** | Frame-rate-independent, deterministic pacing, catch-up | No catch-up cap → can over-run after a long pause (§8). |
-| **Canvas `ImageData` (not DOM cells)** | Scales past the ~10k-element DOM wall; one blit per frame | Lower-level pixel maths; no free DOM hit-testing (hence the *planned* overlay). |
+| **Fixed capacity = `ANT_POP_CAP`** | Births don't reallocate the SoA arrays | Population is hard-capped; growing the cap means re-allocating. |
+| **Fixed-timestep accumulator + catch-up cap** | Frame-rate-independent pacing; a paused tab can't spiral | Ticks beyond the cap are dropped (simulated time is lost after a long pause). |
+| **Food-gated refuel + reproduction (shared pool)** | Closes the core loop; food finally *matters* | Balance is delicate and currently un-tuned (§8). |
+| **Canvas `ImageData` (not DOM cells)** | Scales past the ~10k-element DOM wall; one blit per frame | Lower-level pixel maths; hit-testing is done via `clientToCell`, not DOM. |
+| **Single transparent hover overlay (not a CSS grid)** | One element + a coordinate→cell map instead of ~1k divs | No per-cell DOM hooks (fine for a tooltip; revisit if we need per-cell widgets). |
 | **1-px inset for grid lines** | Crisp 1-px lines at any cell size, no extra draw calls | Grid-line colour is fixed to the canvas background. |
-| **Plain-TS store, not a Svelte store** | Keeps the 1 Hz mutation loop out of Svelte's reactivity | Reactivity wiring is subtle and partly unused (§8). |
-| **4-directional (von Neumann) movement** | Less jittery paths, cheaper weighting; supersedes the plan's "locked" 8-way decision | Ants can't move diagonally. |
-| **3×3 nest** | Small, cosy starting colony that reads clearly at 32×32 | Little room; assumes a fixed centre (16,16). |
-| **Weighted-random (roulette) movement** | Emergent, organic trail-following; avoids everyone taking one path | Non-deterministic; harder to unit-test exactly. |
+| **Plain-TS store + explicit `subscribe`** | Keeps the 1 Hz mutation loop out of Svelte's reactivity; reactivity is explicit, not proxy-luck | A `version` counter must be threaded through the derived UI values. |
+| **Centralised, injectable, seeded RNG** | Reproducible saves/replays and deterministic tests | A shared module-level source (one active stream at a time). |
+| **4-directional (von Neumann) movement** | Less jittery paths, cheaper weighting | Ants can't move diagonally. |
+| **3×3 nest at the derived centre** | Small, cosy colony; geometry survives grid resizing | Little room; assumes a centred nest. |
+| **Weighted-random (roulette) movement** | Emergent, organic trail-following | Non-deterministic (unless seeded); harder to unit-test exactly. |
 
 ---
 
@@ -399,77 +497,74 @@ These come from [`game-design.md`](../.kilo/plans/game-design.md) and are **not 
 so you know where the architecture is heading.
 
 - **Economy:** Evolution Points (EVO) and prestige **Genome Tokens (GT)** alongside food. Today only
-  `resources.food` exists.
+  `resources.food` exists (feeding refuel + reproduction).
 - **Upgrade tree:** stats (speed, energy, lifespan, carry capacity), behaviours, colony (population
   cap, spawn rate), territory.
 - **Grid tiers:** expand 32×32 → 64 → 96 → 128 → 160, reallocating typed arrays and copying the old
-  world into the centre.
+  world into the centre. Nest geometry is already derived from the grid size, which eases this.
 - **Prestige:** "Ascend Colony" reset that keeps Genome Tokens and a permanent upgrade tree.
 - **Persistence:** versioned `localStorage` save schema (`SaveV1`), auto-save, offline catch-up,
-  export/import.
-- **Interaction overlay:** the invisible CSS-grid `<div>` over the canvas for hover/click/tooltips
-  described in [`grid-design.md`](../.kilo/plans/grid-design.md), plus a `ResizeObserver` to make the
-  grid responsive.
+  export/import. The seeded RNG makes reproducible saves feasible.
+- **Richer interaction overlay:** the hover tooltip + `ResizeObserver` exist; still planned are
+  click/selection actions, per-cell affordances, and any placement/interaction tools from
+  [`grid-design.md`](../.kilo/plans/grid-design.md).
 
 ---
 
 ## 8. Known Issues, Gaps & Inconsistencies
 
-Read this before relying on any subsystem. Each item notes *why it matters*; none is hard to fix.
+The long list of subsystem bugs and inconsistencies that this document previously carried has been
+**resolved** (see [§8.2](#82-recently-resolved)). What remains are higher-level gaps.
 
-1. **The colony always collapses (~tick 200).** Ants never reproduce and the nest never refuels their
-   energy. Starting energy 100 − 0.5 per tick ⇒ death at ~tick 200, well before the 2000 age cap. So
-   every game ends in "Colony collapsed" after a few minutes. *This is the single biggest gap: the
-   core loop is not yet self-sustaining.* The obvious next features are ant reproduction at the nest
-   and/or energy replenishment when an ant reaches the nest.
+### 8.1 Remaining gaps
 
-2. **Naturally-spawned food is invisible and unharvestable.** `spawnFoodTick` (`world.ts`) increments
-   `world.food[idx]` but does **not** set `terrain = FOOD`. Both the renderer and the ant pickup logic
-   key off `terrain === FOOD`, so this food is never drawn and never collected. Startup food works
-   because `createWorld`'s `spawnFood` *does* set the terrain. *Fix: set `terrain = FOOD` in
-   `spawnFoodTick` too.*
+1. **Colony balance is un-tuned.** The self-sustain loop works mechanically, but the numbers
+   (`ANT_POP_CAP` 15, `STARTING_ANTS` 3, refuel 10 energy per 1 food per 2 ticks, reproduction 20
+   food per birth every 20 ticks, and the 1-food-per-trip forage yield) have not been playtested for
+   a satisfying difficulty curve. Refuel and reproduction share one food pool, so the economy can be
+   fragile. *Expect to iterate on `constants.ts`.*
 
-3. **Carrying/returning ants move twice per tick.** In `stepAnts`, `moveAnt` always moves the ant
-   (food-weighted), and then a carrying/returning ant moves *again* via `followPheromoneHome`
-   (home-weighted). The cell interaction (food pickup / nest drop) is only evaluated after the *first*
-   move. This diverges from the plan's "choose one move based on state," can skip a nest deposit, and
-   the second move isn't bounds-reverted. *Fix: choose a single state-appropriate move, then interact.*
+2. **Playwright E2E test is still a placeholder.** `tests/e2e/example.spec.ts` asserts trivialities.
+   The unit layer (`tests/rng|world|ant|simulation.test.ts`) covers the pure `game/` logic — including
+   a seeded-determinism check — but there is no real end-to-end coverage of the app.
 
-4. **`palette.ts` is dead code.** `renderer.ts` hardcodes RGB values inline instead of importing
-   `PALETTE`. Two sources of truth for colours; changing one won't change the other. *Fix: import and
-   use `PALETTE` in the renderer.*
+3. **High-DPI canvas sizing is imperfect.** `resize` divides the available size by `devicePixelRatio`
+   and blits an unscaled `ImageData`, so on displays with `dpr > 1` the world can render smaller than
+   the container / not fill the backing store. It is correct at `dpr = 1` (typical dev). *Fix: size
+   the `ImageData` to the device pixels (or scale the blit) and stop dividing by `dpr`.*
 
-5. **Constants are duplicated.** `ANT_STATE`/`TERRAIN` live in `constants.ts` **and** are re-declared
-   as `AntState`/`Terrain` in `types.ts`. The `types.ts` copies are effectively unused. *Fix: delete
-   the duplicates and import from `constants.ts`.*
+4. **Catch-up cap is not unit-tested.** The `MAX_CATCHUP_TICKS` clamp lives inside the
+   `requestAnimationFrame`-driven `createSimLoop` and isn't exercised by a test (it needs a mocked RAF
+   clock). The logic is simple, but it's currently verified only by inspection.
 
-6. **Magic numbers for the nest and dead-ant sentinel.** The nest centre `(16, 16)` is hardcoded in
-   both `createWorld` and `collectFoodAtNest`, and "dead" is the literal `255` rather than a named
-   `DEAD` constant. If the grid size ever changes (grid tiers), these break silently. *Fix: derive the
-   centre from `world.w/h` and add a `ANT_STATE.DEAD = 255` constant.*
+5. **Default RNG re-seeds per load.** The default source is mulberry32 seeded from `Date.now()`, so
+   runs vary between loads but aren't reproducible unless a fixed seed is injected via
+   `setRandomSource`. There is no UI to set/inspect the seed yet (relevant once saves land).
 
-7. **No interaction overlay or `ResizeObserver`.** `renderer.resize` runs only on init / new game and
-   builds a brand-new `<canvas>` each call. There's no hover, click, tooltip, or response to window
-   resizing — all of which the plans call for. *Fix: add the CSS-grid overlay and observe the
-   container.*
+6. **No interaction actions beyond hover.** The overlay reports the hovered cell and shows a tooltip,
+   but there are no click/selection behaviours yet (see [§7](#7-planned--future-roadmap-not-yet-built)).
 
-8. **RNG is not actually centralised.** `rng.ts` wraps `Math.random`, but `world.ts` and `ant.ts` also
-   call `Math.random()` directly. A seeded RNG (needed for reproducible saves/replays) can't be
-   dropped in cleanly. *Fix: route all randomness through a single injectable RNG.*
+### 8.2 Recently resolved
 
-9. **The store's `subscribe` API is unused.** `gameStore` exposes `subscribe`/`notify`, but
-   `App.svelte` never subscribes — it wraps the store in `$state` and reads via `$derived`, relying on
-   Svelte proxying the in-place mutations. Live HUD updating hinges on that subtlety, so verify it in
-   the browser when touching this area. *Fix: either use `subscribe` explicitly or document the
-   reactive contract.*
+For traceability, the following gaps from earlier revisions of this document have been fixed:
 
-10. **No catch-up cap in the sim loop.** After a long pause (e.g. a backgrounded tab) the accumulator
-    can hold many seconds, and the `while` loop will run every missed tick in one frame ("spiral of
-    death" risk). *Fix: clamp the accumulator or the number of catch-up ticks per frame.*
-
-11. **Tests are placeholders.** `tests/example.test.ts` and `tests/e2e/example.spec.ts` assert
-    trivialities. There is no real coverage of the simulation. The pure `game/` layer is the ideal
-    place to start testing.
+- **Colony no longer starves out.** Ants refuel from colony food while on the nest, and the colony
+  reproduces from banked food — the core loop is self-sustaining (energy cost is now `1`/tick).
+- **Naturally-spawned food is drawn and harvestable.** `spawnFoodTick` sets `terrain = FOOD`; emptied
+  food cells revert to `EMPTY`.
+- **Ants move once per tick.** The carrying/returning "double move" is gone; a single state-weighted
+  move is followed by one interaction.
+- **`palette.ts` is used.** The renderer imports `PALETTE` instead of hardcoding RGB.
+- **Duplicate constants removed.** `AntState` / `Terrain` no longer shadow `ANT_STATE` / `TERRAIN`.
+- **Magic numbers named/derived.** Nest centre comes from `nestCenter()`; the dead sentinel is
+  `ANT_STATE.DEAD`; nest size is `NEST_RADIUS`.
+- **Responsive canvas + hover overlay.** A `ResizeObserver` refits the (reused) canvas; a tooltip
+  overlay inspects cells.
+- **RNG is centralised and seedable.** All randomness flows through `rng.ts`'s injectable source.
+- **The store's `subscribe` API is used.** `App.svelte` subscribes and drives its reactive values off
+  an explicit `version` counter.
+- **Sim-loop catch-up is bounded.** The accumulator is clamped to `MAX_CATCHUP_TICKS`.
+- **Real unit tests exist.** The pure `game/` layer is covered by Vitest specs.
 
 ---
 
@@ -478,6 +573,8 @@ Read this before relying on any subsystem. Each item notes *why it matters*; non
 - **Tick** — one logical simulation step. Here the game targets **1 tick per second** (`TICK_RATE_HZ`).
 - **Fixed-timestep accumulator** — a loop that advances the simulation in equal-sized steps regardless
   of the display frame rate, by banking real elapsed time and spending it one fixed step at a time.
+- **Catch-up cap** — an upper bound (`MAX_CATCHUP_TICKS`) on how many banked ticks the loop will replay
+  in a single frame, so a long pause can't cause a "spiral of death."
 - **`requestAnimationFrame` (RAF)** — the browser's "call me before the next repaint" hook; drives the
   loop.
 - **Pheromone** — a scent value stored per cell. **Home pheromone** marks the way back to the nest;
@@ -485,27 +582,35 @@ Read this before relying on any subsystem. Each item notes *why it matters*; non
 - **Decay** — multiplying all pheromones by a factor < 1 each interval so trails fade over time.
 - **Diffusion** — spreading each cell's pheromone toward its neighbours' average, turning point
   deposits into smooth gradients.
+- **Refuel** — an ant on the nest converting colony food into energy (capped at max energy).
+- **Reproduction** — the colony spending banked food to spawn a new ant (up to the population cap).
 - **Structure-of-Arrays (SoA)** — storing each field of many entities in its own array (parallel
   arrays indexed by entity number), rather than an array of per-entity objects. Cache-friendly.
+- **Capacity vs count** — the ant arrays are allocated to `capacity` (= `ANT_POP_CAP`); `count` is the
+  number of live ants in the dense prefix `[0, count)`.
 - **Typed array** — a fixed-type, fixed-size numeric buffer (`Uint8Array`, `Float32Array`, …). Compact
   and fast; no per-element object overhead.
 - **von Neumann neighbourhood** — the 4 orthogonal neighbours (N/E/S/W). *This game uses this for
   movement.*
 - **Moore neighbourhood** — the 8 surrounding neighbours (orthogonal + diagonal). *Not used for
-  movement anymore.*
+  movement.*
 - **Roulette-wheel selection** — pick an option at random with probability proportional to its weight
   (like a wheel whose slice sizes are the weights).
 - **Compaction** — after some ants die, shifting the surviving entries down to keep the SoA arrays
   densely packed `[0 .. count-1]`.
-- **Nest** — the 3×3 home block at the grid centre where ants deposit food and food is collected into
-  the colony resource.
+- **Nest** — the 3×3 home block at the (derived) grid centre where ants deposit food, refuel, and are
+  born, and where food is collected into the colony resource.
 - **Forage** — an ant's search-for-and-retrieve-food behaviour.
+- **Seeded PRNG / mulberry32** — a deterministic pseudo-random generator: the same seed produces the
+  same stream, enabling reproducible runs and deterministic tests.
 - **DPR (device pixel ratio)** — how many physical pixels map to one CSS pixel; multiplied into the
-  canvas size so rendering stays crisp on high-DPI screens.
+  canvas size so rendering stays crisp on high-DPI screens (with a known caveat, §8.1).
 - **`ImageData`** — a raw RGBA pixel buffer for a canvas; the renderer writes pixels into it and blits
   it in one call.
-- **Dirty flag** — a "state changed, needs redraw" boolean used to skip redundant repaints (referenced
-  in the plans; the current renderer simply redraws every tick).
+- **`ResizeObserver`** — a browser API that fires a callback when an observed element's size changes;
+  used to keep the canvas fitted to its container.
+- **`version` counter** — a Svelte `$state` integer bumped on every store notify; the UI's derived
+  values depend on it so they recompute each tick without relying on proxying in-place mutations.
 - **Idle / incremental game** — a genre built around numbers steadily growing, upgrades, and progress
   that continues (or accrues) while the player is away.
 - **Prestige** — an idle-game reset that trades current progress for a permanent multiplier/currency
@@ -517,5 +622,5 @@ Read this before relying on any subsystem. Each item notes *why it matters*; non
 ---
 
 *This document reflects the code at the time of writing. When you change a subsystem, update the
-matching section — especially [§8](#8-known-issues-gaps--inconsistencies), which should shrink as the
-prototype matures.*
+matching section — especially [§8](#8-known-issues-gaps--inconsistencies), which should track the
+real state of the prototype as it matures.*

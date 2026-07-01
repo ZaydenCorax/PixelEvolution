@@ -12,6 +12,9 @@ export interface GameStore {
   stop(): void;
   startNewGame(): void;
   subscribe(fn: () => void): () => void;
+  /** Map a viewport point to the grid cell under it (for hover/tooltips), or null. */
+  cellAt(clientX: number, clientY: number): { x: number; y: number } | null;
+  destroy(): void;
 }
 
 export function createGameStore(container: HTMLDivElement): GameStore {
@@ -32,6 +35,14 @@ export function createGameStore(container: HTMLDivElement): GameStore {
   }
 
   const simLoop = createSimLoop(onTick);
+
+  // Keep the canvas fitted to its container. The observer fires once immediately
+  // (initial size) and on every subsequent container/window resize.
+  const resizeObserver = new ResizeObserver(() => {
+    renderer.resize(state.world.w, state.world.h);
+    renderer.draw(state.world, state.ants);
+  });
+  resizeObserver.observe(container);
 
   return {
     get state() {
@@ -72,6 +83,15 @@ export function createGameStore(container: HTMLDivElement): GameStore {
     subscribe(fn: () => void): () => void {
       listeners.add(fn);
       return () => listeners.delete(fn);
+    },
+    cellAt(clientX: number, clientY: number) {
+      return renderer.clientToCell(clientX, clientY);
+    },
+    destroy(): void {
+      simLoop.stop();
+      resizeObserver.disconnect();
+      renderer.destroy();
+      listeners.clear();
     },
   };
 }

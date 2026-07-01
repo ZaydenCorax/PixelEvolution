@@ -1,9 +1,18 @@
 import type { Ants, World as WorldType } from '../game/types';
+import { TERRAIN, ANT_STATE, MAX_FOOD_PER_CELL } from '../game/constants';
+import { PALETTE } from './palette';
+
+// Linear interpolation between two channel values (used for the food gradient).
+function lerp(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t);
+}
 
 export interface Renderer {
   container: HTMLDivElement;
   resize(w: number, h: number): void;
   draw(world: WorldType, ants: Ants): void;
+  /** Map a viewport (clientX/Y) point to a grid cell, or null if outside the canvas. */
+  clientToCell(clientX: number, clientY: number): { x: number; y: number } | null;
   destroy(): void;
 }
 
@@ -11,7 +20,7 @@ export function createRenderer(container: HTMLDivElement): Renderer {
   let w = 32;
   let h = 32;
   let cellSize = 20;
-  let canvas: HTMLCanvasElement;
+  let canvas: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D;
   let imageData: ImageData;
 
@@ -27,26 +36,47 @@ export function createRenderer(container: HTMLDivElement): Renderer {
     const pixelW = w * cellSize;
     const pixelH = h * cellSize;
 
-    canvas = document.createElement('canvas');
+    // Reuse the canvas element across resizes so the ResizeObserver can call this
+    // cheaply and we don't tear down/rebuild DOM (or lose it under the overlay).
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.style.imageRendering = 'pixelated';
+      canvas.style.display = 'block';
+      canvas.style.margin = 'auto';
+      canvas.style.backgroundColor = '#2a2a2a';
+      container.innerHTML = '';
+      container.style.position = 'relative';
+      container.style.width = '100%';
+      container.style.height = '100%';
+      container.appendChild(canvas);
+    }
+
     canvas.width = pixelW * dpr;
     canvas.height = pixelH * dpr;
     canvas.style.width = `${pixelW}px`;
     canvas.style.height = `${pixelH}px`;
-    canvas.style.imageRendering = 'pixelated';
-    canvas.style.display = 'block';
-    canvas.style.margin = 'auto';
-    canvas.style.backgroundColor = '#2a2a2a';
 
     ctx = canvas.getContext('2d')!;
     ctx.scale(dpr, dpr);
 
     imageData = ctx.createImageData(pixelW, pixelH);
+  }
 
-    container.innerHTML = '';
-    container.style.position = 'relative';
-    container.style.width = '100%';
-    container.style.height = '100%';
-    container.appendChild(canvas);
+  function clientToCell(clientX: number, clientY: number): { x: number; y: number } | null {
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (
+      clientX < rect.left ||
+      clientX >= rect.right ||
+      clientY < rect.top ||
+      clientY >= rect.bottom
+    ) {
+      return null;
+    }
+    const x = Math.floor(((clientX - rect.left) / rect.width) * w);
+    const y = Math.floor(((clientY - rect.top) / rect.height) * h);
+    if (x < 0 || x >= w || y < 0 || y >= h) return null;
+    return { x, y };
   }
 
   function draw(world: WorldType, ants: Ants): void {
@@ -59,17 +89,17 @@ export function createRenderer(container: HTMLDivElement): Renderer {
       for (let x = 0; x < worldW; x++) {
         const idx = y * worldW + x;
         const t = terrain[idx];
-        let r = 30, g = 30, b = 30;
+        let r = PALETTE.empty[0], g = PALETTE.empty[1], b = PALETTE.empty[2];
 
-        if (t === 1) {
-          r = 200;
-          g = 150;
-          b = 50;
-        } else if (t === 2) {
-          const amt = food[idx] / 255;
-          r = Math.round(50 + amt * 100);
-          g = Math.round(120 + amt * 135);
-          b = Math.round(50 + amt * 50);
+        if (t === TERRAIN.NEST) {
+          r = PALETTE.nest[0];
+          g = PALETTE.nest[1];
+          b = PALETTE.nest[2];
+        } else if (t === TERRAIN.FOOD) {
+          const amt = food[idx] / MAX_FOOD_PER_CELL;
+          r = lerp(PALETTE.foodLow[0], PALETTE.foodHigh[0], amt);
+          g = lerp(PALETTE.foodLow[1], PALETTE.foodHigh[1], amt);
+          b = lerp(PALETTE.foodLow[2], PALETTE.foodHigh[2], amt);
         }
 
         const homePher = pheromoneHome[idx];
@@ -78,14 +108,14 @@ export function createRenderer(container: HTMLDivElement): Renderer {
         if (homePher > 0 || foodPher > 0) {
           const blend = 0.5;
           if (homePher > 0) {
-            r = Math.round(r * (1 - blend) + 50 * blend * homePher);
-            g = Math.round(g * (1 - blend) + 80 * blend * homePher);
-            b = Math.round(b * (1 - blend) + 180 * blend * homePher);
+            r = Math.round(r * (1 - blend) + PALETTE.pheromoneHome[0] * blend * homePher);
+            g = Math.round(g * (1 - blend) + PALETTE.pheromoneHome[1] * blend * homePher);
+            b = Math.round(b * (1 - blend) + PALETTE.pheromoneHome[2] * blend * homePher);
           }
           if (foodPher > 0) {
-            r = Math.round(r * (1 - blend) + 180 * blend * foodPher);
-            g = Math.round(g * (1 - blend) + 50 * blend * foodPher);
-            b = Math.round(b * (1 - blend) + 120 * blend * foodPher);
+            r = Math.round(r * (1 - blend) + PALETTE.pheromoneFood[0] * blend * foodPher);
+            g = Math.round(g * (1 - blend) + PALETTE.pheromoneFood[1] * blend * foodPher);
+            b = Math.round(b * (1 - blend) + PALETTE.pheromoneFood[2] * blend * foodPher);
           }
         }
 
@@ -107,11 +137,11 @@ export function createRenderer(container: HTMLDivElement): Renderer {
       const ay = ants.y[i];
       if (ax < 0 || ax >= worldW || ay < 0 || ay >= worldH) continue;
 
-      let r = 220, g = 220, b = 220;
-      if (ants.state[i] === 1) {
-        r = 255; g = 255; b = 100;
-      } else if (ants.state[i] === 2) {
-        r = 100; g = 200; b = 255;
+      let [r, g, b] = PALETTE.antSearching;
+      if (ants.state[i] === ANT_STATE.CARRYING) {
+        [r, g, b] = PALETTE.antCarrying;
+      } else if (ants.state[i] === ANT_STATE.RETURNING) {
+        [r, g, b] = PALETTE.antReturning;
       }
 
       const antSize = Math.min(cellSize - 2, 10);
@@ -137,8 +167,10 @@ export function createRenderer(container: HTMLDivElement): Renderer {
     container,
     resize,
     draw,
+    clientToCell,
     destroy() {
       container.innerHTML = '';
+      canvas = null;
     },
   };
 }

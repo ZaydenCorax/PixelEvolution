@@ -1,16 +1,5 @@
-export type AntState = 0 | 1 | 2;
-export const AntState = {
-  SEARCHING: 0 as AntState,
-  CARRYING: 1 as AntState,
-  RETURNING: 2 as AntState,
-};
-
-export type Terrain = 0 | 1 | 2;
-export const Terrain = {
-  EMPTY: 0 as Terrain,
-  NEST: 1 as Terrain,
-  FOOD: 2 as Terrain,
-};
+// Simulation enums (ANT_STATE / TERRAIN) live in constants.ts — the single source
+// of truth. This file only defines the data shapes.
 
 export interface World {
   w: number;
@@ -23,6 +12,7 @@ export interface World {
 
 export interface Ants {
   count: number;
+  capacity: number;
   x: Int16Array;
   y: Int16Array;
   dir: Uint8Array;

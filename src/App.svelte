@@ -1,36 +1,52 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { createGameStore } from './stores/gameStore';
-  import { ANT_STATE } from './game/constants';
+  import { ANT_STATE, TERRAIN } from './game/constants';
 
   let container: HTMLDivElement;
   let store = $state<ReturnType<typeof createGameStore> | null>(null);
 
   let screen = $state<'menu' | 'playing' | 'gameover'>('menu');
 
+  // The store mutates its GameState in place, so we can't rely on Svelte proxying
+  // those mutations. Instead we subscribe to the store and bump `version` on every
+  // notify; the derived values below read `version` to recompute each tick
+  // (explicit reactive contract, DESIGN.md §8.9).
+  let version = $state(0);
+  let unsubscribe: (() => void) | undefined;
+
+  // Hovered cell + cursor position for the inspection tooltip (see DESIGN.md §8.7).
+  let hover = $state<{ x: number; y: number; px: number; py: number } | null>(null);
+
   onMount(() => {
     if (container) {
       store = createGameStore(container);
+      unsubscribe = store.subscribe(() => version++);
       store.startNewGame();
       store.stop();
     }
-    return () => store?.stop();
+    return () => {
+      unsubscribe?.();
+      store?.destroy();
+    };
   });
 
   $effect(() => {
+    void version;
     if (store?.gameOver && screen === 'playing') {
       screen = 'gameover';
     }
   });
 
-  let food = $derived(store?.state.resources.food ?? 0);
-  let population = $derived(store?.state.ants.count ?? 0);
-  let tick = $derived(store?.state.tick ?? 0);
-  let gameOverReason = $derived(store?.gameOverReason ?? '');
-  let paused = $derived(store?.paused ?? false);
-  let ants = $derived(store?.state.ants);
+  let food = $derived.by(() => (void version, store?.state.resources.food ?? 0));
+  let population = $derived.by(() => (void version, store?.state.ants.count ?? 0));
+  let tick = $derived.by(() => (void version, store?.state.tick ?? 0));
+  let gameOverReason = $derived.by(() => (void version, store?.gameOverReason ?? ''));
+  let paused = $derived.by(() => (void version, store?.paused ?? false));
+  let ants = $derived.by(() => (void version, store?.state.ants));
 
   let antStats = $derived.by(() => {
+    void version;
     if (!ants) return [];
     const stats: Record<number, { count: number; totalEnergy: number; totalAge: number }> = {
       [ANT_STATE.SEARCHING]: { count: 0, totalEnergy: 0, totalAge: 0 },
@@ -78,6 +94,39 @@
     ];
   });
 
+  let hoverInfo = $derived.by(() => {
+    void version;
+    if (!hover || !store) return null;
+    const world = store.state.world;
+    const idx = hover.y * world.w + hover.x;
+    const t = world.terrain[idx];
+    const terrainName = t === TERRAIN.NEST ? 'Nest' : t === TERRAIN.FOOD ? 'Food' : 'Empty';
+    const ants = store.state.ants;
+    let antsHere = 0;
+    for (let i = 0; i < ants.count; i++) {
+      if (ants.state[i] <= ANT_STATE.RETURNING && ants.x[i] === hover.x && ants.y[i] === hover.y) {
+        antsHere++;
+      }
+    }
+    return {
+      terrainName,
+      food: world.food[idx],
+      pheromoneHome: world.pheromoneHome[idx],
+      pheromoneFood: world.pheromoneFood[idx],
+      antsHere,
+    };
+  });
+
+  function onWorldMouseMove(e: MouseEvent) {
+    if (!store) return;
+    const cell = store.cellAt(e.clientX, e.clientY);
+    hover = cell ? { x: cell.x, y: cell.y, px: e.clientX, py: e.clientY } : null;
+  }
+
+  function onWorldMouseLeave() {
+    hover = null;
+  }
+
   function startGame() {
     if (!store) return;
     store.startNewGame();
@@ -91,7 +140,17 @@
 
 <div class="app" class:playing={screen === 'playing'}>
   <div class="game-layout">
-    <div bind:this={container} class="world-container"></div>
+    <div class="world-wrap">
+      <div bind:this={container} class="world-container"></div>
+      {#if screen === 'playing'}
+        <div
+          class="hover-overlay"
+          role="presentation"
+          onmousemove={onWorldMouseMove}
+          onmouseleave={onWorldMouseLeave}
+        ></div>
+      {/if}
+    </div>
     {#if screen === 'playing'}
       <aside class="stats-panel">
         <h3>Colony Stats</h3>
@@ -123,6 +182,18 @@
       </aside>
     {/if}
   </div>
+
+  {#if screen === 'playing' && hover && hoverInfo}
+    <div class="tooltip" style="left: {hover.px + 14}px; top: {hover.py + 14}px">
+      <div class="tt-title">Cell ({hover.x}, {hover.y})</div>
+      <div class="tt-row">{hoverInfo.terrainName}{hoverInfo.food > 0 ? ` · ${hoverInfo.food} food` : ''}</div>
+      <div class="tt-row">Home pheromone: {hoverInfo.pheromoneHome.toFixed(2)}</div>
+      <div class="tt-row">Food pheromone: {hoverInfo.pheromoneFood.toFixed(2)}</div>
+      {#if hoverInfo.antsHere > 0}
+        <div class="tt-row">Ants here: {hoverInfo.antsHere}</div>
+      {/if}
+    </div>
+  {/if}
 
   {#if screen === 'menu'}
     <div class="overlay menu">
@@ -189,11 +260,50 @@
     overflow: hidden;
   }
 
-  .world-container {
+  .world-wrap {
     flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .world-container {
+    width: 100%;
+    height: 100%;
     position: relative;
     background: #2a2a2a;
     overflow: hidden;
+  }
+
+  .hover-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    cursor: crosshair;
+  }
+
+  .tooltip {
+    position: fixed;
+    z-index: 20;
+    pointer-events: none;
+    background: rgba(10, 10, 14, 0.92);
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: #ddd;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  .tt-title {
+    color: #fff;
+    font-weight: 600;
+    margin-bottom: 0.15rem;
+  }
+
+  .tt-row {
+    color: #bbb;
   }
 
   .stats-panel {
