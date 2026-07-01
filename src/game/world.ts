@@ -4,9 +4,7 @@ import {
   FOOD_SPAWN_RATE,
   FOOD_SPAWN_AMOUNT,
   STARTING_FOOD,
-  PHEROMONE_DECAY,
-  PHEROMONE_DECAY_INTERVAL_TICKS,
-  PHEROMONE_DIFFUSE_AMOUNT,
+  PHEROMONE_DECREMENT,
   NEST_RADIUS,
 } from './constants';
 import { World } from './types';
@@ -104,53 +102,16 @@ export function depositPheromone(
   world.pheromoneFood[idx] = Math.min(1, world.pheromoneFood[idx] + food);
 }
 
-export function tickPheromones(world: World, tick: number): void {
-  if (tick % PHEROMONE_DECAY_INTERVAL_TICKS !== 0) return;
-
+// Linear decay every tick: each marker loses PHEROMONE_DECREMENT (1/duration) and is
+// floored at 0, so a freshly-laid crumb (1.0) fully fades after PHEROMONE_DURATION_TICKS.
+// Pheromones do NOT diffuse/spread — the trail stays exactly where it was laid.
+export function tickPheromones(world: World): void {
   const len = world.w * world.h;
   for (let i = 0; i < len; i++) {
-    world.pheromoneHome[i] *= PHEROMONE_DECAY;
-    world.pheromoneFood[i] *= PHEROMONE_DECAY;
-  }
-
-  diffusePheromones(world, world.pheromoneHome);
-  diffusePheromones(world, world.pheromoneFood);
-}
-
-function diffusePheromones(world: World, arr: Float32Array): void {
-  const w = world.w;
-  const h = world.h;
-  const next = new Float32Array(w * h);
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const idx = y * w + x;
-      let sum = arr[idx] * 4;
-      let count = 4;
-
-      if (x > 0) {
-        sum += arr[idx - 1];
-        count++;
-      }
-      if (x < w - 1) {
-        sum += arr[idx + 1];
-        count++;
-      }
-      if (y > 0) {
-        sum += arr[idx - w];
-        count++;
-      }
-      if (y < h - 1) {
-        sum += arr[idx + w];
-        count++;
-      }
-
-      next[idx] = arr[idx] + (sum / count - arr[idx]) * PHEROMONE_DIFFUSE_AMOUNT;
-    }
-  }
-
-  for (let i = 0; i < arr.length; i++) {
-    arr[i] = next[i];
+    const home = world.pheromoneHome[i];
+    if (home > 0) world.pheromoneHome[i] = Math.max(0, home - PHEROMONE_DECREMENT);
+    const food = world.pheromoneFood[i];
+    if (food > 0) world.pheromoneFood[i] = Math.max(0, food - PHEROMONE_DECREMENT);
   }
 }
 

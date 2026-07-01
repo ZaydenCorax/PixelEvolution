@@ -19,6 +19,7 @@ export interface Ants {
   state: Uint8Array;
   energy: Float32Array;
   age: Uint32Array;
+  carried: Uint8Array; // units of food this ant is currently carrying (0..ANT_CARRY_CAPACITY)
 }
 
 export interface GameState {

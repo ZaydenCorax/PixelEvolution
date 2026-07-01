@@ -32,7 +32,7 @@ export function tick(state: GameState): void {
   if (state.gameOver) return;
 
   stepAnts(state.ants, state.world, state.resources, state.tick);
-  tickPheromones(state.world, state.tick);
+  tickPheromones(state.world);
   spawnFoodTick(state.world);
 
   state.tick++;

@@ -35,15 +35,32 @@ export const ANT_MOVE_DIRECTIONS = [
   { dx: -1, dy: 0 }, // 3: West
 ] as const;
 
-export const PHEROMONE_DECAY = 0.995;
-export const PHEROMONE_DECAY_INTERVAL_TICKS = 2;
-export const PHEROMONE_DIFFUSE_AMOUNT = 0.1;
+// Pheromones are breadcrumb trails with a bounded lifetime. A freshly-laid marker
+// is 1.0 and loses PHEROMONE_DECREMENT each tick (linear decay), reaching 0 after
+// PHEROMONE_DURATION_TICKS. A marker's remaining value is therefore proportional to
+// its remaining life, so its age is readable and the renderer scales its size to it.
+// Baseline is 20 ticks; future in-game upgrades may extend the duration. Pheromones
+// deliberately do NOT diffuse/spread outward — spreading is reserved for a later upgrade.
+export const PHEROMONE_DURATION_TICKS = 20;
+export const PHEROMONE_DECREMENT = 1 / PHEROMONE_DURATION_TICKS;
+
+// Movement weights for the ants' weighted-roulette direction choice (see ant.ts).
+// Kept as named constants so future gene upgrades can tune them per-colony.
+export const WEIGHT_BASE = 1; // every valid neighbour starts here (keeps exploration alive)
+export const WEIGHT_TARGET_CELL = 50; // adjacent goal cell (food when searching, nest when homing)
+export const WEIGHT_TRAIL_ON = 10; // bonus for stepping onto the relevant trail at all
+export const WEIGHT_TRAIL_AGE = 20; // extra weight scaled by crumb age → bias toward the trail's origin
+export const WEIGHT_HOMING = 25; // fallback nudge toward the nest when no home trail is nearby
+
 export const FOOD_SPAWN_RATE = 0.02;
 export const FOOD_SPAWN_AMOUNT = 20;
 export const STARTING_ANTS = 3;
 export const STARTING_FOOD = 200;
 export const ANT_ENERGY_COST = 1;
 export const ANT_INITIAL_ENERGY = 100;
+// How much food a single ant can carry at once. Ants keep picking up food (even on the
+// way home) until they hit this cap, then drop the whole load at the nest.
+export const ANT_CARRY_CAPACITY = 5;
 export const ANT_LIFESPAN = 2000;
 
 // Colony self-sustain (see DESIGN.md §8.1). Ants that sit on the nest refuel by

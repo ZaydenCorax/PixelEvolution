@@ -7,6 +7,37 @@ function lerp(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t);
 }
 
+// Paint a centred square inside one grid cell, sized by `value` (0..1) — used to render
+// a pheromone marker so it shrinks in proportion to its remaining decay value. A fully
+// decayed crumb (value → 0) rounds to zero size and draws nothing.
+function fillCellSquare(
+  data: Uint8ClampedArray,
+  worldW: number,
+  cellSize: number,
+  cellX: number,
+  cellY: number,
+  value: number,
+  color: readonly number[],
+): void {
+  const size = Math.round((cellSize - 2) * value);
+  if (size <= 0) return;
+
+  const off = Math.floor((cellSize - size) / 2);
+  const baseX = cellX * cellSize + off;
+  const baseY = cellY * cellSize + off;
+  const stride = worldW * cellSize;
+
+  for (let sy = 0; sy < size; sy++) {
+    for (let sx = 0; sx < size; sx++) {
+      const di = ((baseY + sy) * stride + (baseX + sx)) * 4;
+      data[di] = color[0];
+      data[di + 1] = color[1];
+      data[di + 2] = color[2];
+      data[di + 3] = 255;
+    }
+  }
+}
+
 export interface Renderer {
   container: HTMLDivElement;
   resize(w: number, h: number): void;
@@ -102,23 +133,8 @@ export function createRenderer(container: HTMLDivElement): Renderer {
           b = lerp(PALETTE.foodLow[2], PALETTE.foodHigh[2], amt);
         }
 
-        const homePher = pheromoneHome[idx];
-        const foodPher = pheromoneFood[idx];
-
-        if (homePher > 0 || foodPher > 0) {
-          const blend = 0.5;
-          if (homePher > 0) {
-            r = Math.round(r * (1 - blend) + PALETTE.pheromoneHome[0] * blend * homePher);
-            g = Math.round(g * (1 - blend) + PALETTE.pheromoneHome[1] * blend * homePher);
-            b = Math.round(b * (1 - blend) + PALETTE.pheromoneHome[2] * blend * homePher);
-          }
-          if (foodPher > 0) {
-            r = Math.round(r * (1 - blend) + PALETTE.pheromoneFood[0] * blend * foodPher);
-            g = Math.round(g * (1 - blend) + PALETTE.pheromoneFood[1] * blend * foodPher);
-            b = Math.round(b * (1 - blend) + PALETTE.pheromoneFood[2] * blend * foodPher);
-          }
-        }
-
+        // Fill the cell inset with the terrain colour (the 1px border is left showing
+        // the canvas background → free grid lines).
         for (let cy = 1; cy < cellSize - 1; cy++) {
           for (let cx = 1; cx < cellSize - 1; cx++) {
             const px = (y * cellSize + cy) * (worldW * cellSize) + (x * cellSize + cx);
@@ -127,6 +143,21 @@ export function createRenderer(container: HTMLDivElement): Renderer {
             data[di + 1] = g;
             data[di + 2] = b;
             data[di + 3] = 255;
+          }
+        }
+
+        // Draw each present pheromone as a centred square whose size scales with its
+        // remaining decay value, so a marker visibly shrinks as it ages. When both
+        // trails share a cell, draw the larger square first so the smaller stays visible.
+        const homePher = pheromoneHome[idx];
+        const foodPher = pheromoneFood[idx];
+        if (foodPher > 0 || homePher > 0) {
+          if (foodPher >= homePher) {
+            fillCellSquare(data, worldW, cellSize, x, y, foodPher, PALETTE.pheromoneFood);
+            fillCellSquare(data, worldW, cellSize, x, y, homePher, PALETTE.pheromoneHome);
+          } else {
+            fillCellSquare(data, worldW, cellSize, x, y, homePher, PALETTE.pheromoneHome);
+            fillCellSquare(data, worldW, cellSize, x, y, foodPher, PALETTE.pheromoneFood);
           }
         }
       }

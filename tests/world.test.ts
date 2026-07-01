@@ -10,7 +10,12 @@ import {
   spawnFoodTick,
 } from '../src/game/world';
 import { setRandomSource, resetRandomSource } from '../src/game/rng';
-import { TERRAIN, MAX_FOOD_PER_CELL, STARTING_FOOD } from '../src/game/constants';
+import {
+  TERRAIN,
+  MAX_FOOD_PER_CELL,
+  STARTING_FOOD,
+  PHEROMONE_DURATION_TICKS,
+} from '../src/game/constants';
 
 afterEach(() => {
   resetRandomSource();
@@ -84,13 +89,38 @@ describe('pheromones', () => {
     expect(world.pheromoneFood[idx]).toBe(1);
   });
 
-  it('tickPheromones decays deposited pheromone', () => {
+  it('tickPheromones decays a marker linearly toward zero', () => {
     const world = createWorld();
     depositPheromone(world, 5, 5, 1, 0);
     const idx = getCellIndex(world, 5, 5);
-    // tick 0 satisfies tick % PHEROMONE_DECAY_INTERVAL_TICKS === 0.
-    tickPheromones(world, 0);
-    expect(world.pheromoneHome[idx]).toBeLessThan(1);
+    // Linear decay: a freshly-laid marker (1.0) loses 1/PHEROMONE_DURATION_TICKS per tick.
+    tickPheromones(world);
+    expect(world.pheromoneHome[idx]).toBeCloseTo(1 - 1 / PHEROMONE_DURATION_TICKS);
     expect(world.pheromoneHome[idx]).toBeGreaterThan(0);
+  });
+
+  it('tickPheromones fully clears a marker after its duration (floored at 0)', () => {
+    const world = createWorld();
+    depositPheromone(world, 5, 5, 1, 0);
+    const idx = getCellIndex(world, 5, 5);
+    for (let t = 0; t < PHEROMONE_DURATION_TICKS; t++) {
+      tickPheromones(world);
+    }
+    expect(world.pheromoneHome[idx]).toBe(0);
+  });
+
+  it('tickPheromones does NOT diffuse/spread to neighbours', () => {
+    const world = createWorld();
+    depositPheromone(world, 5, 5, 1, 0);
+    tickPheromones(world);
+    // Every orthogonal neighbour of (5,5) must stay exactly 0 — no outward spread.
+    for (const [nx, ny] of [
+      [4, 5],
+      [6, 5],
+      [5, 4],
+      [5, 6],
+    ]) {
+      expect(world.pheromoneHome[getCellIndex(world, nx, ny)]).toBe(0);
+    }
   });
 });

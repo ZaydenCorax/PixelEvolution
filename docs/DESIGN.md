@@ -147,6 +147,7 @@ dir  [    1   ,   3   ,   0   , ... ]   Uint8Array   (index into ANT_MOVE_DIRECT
 state[    0   ,   1   ,   0   , ... ]   Uint8Array   (0=searching,1=carrying,2=returning,255=dead)
 energy[  99.5 , 100.0 ,  42.0 , ... ]   Float32Array
 age  [    3   ,   3   ,   3   , ... ]   Uint32Array
+carried[   0   ,   5   ,   2   , ... ]   Uint8Array   (food carried, 0..ANT_CARRY_CAPACITY)
 ```
 
 The `Ants` struct additionally carries two scalars: **`count`** (the number of live ants, always the
@@ -175,9 +176,9 @@ Each subsection covers one file: what it owns, its notable functions, and a *why
 
 ### 4.1 `game/constants.ts` — tuning knobs
 
-All simulation numbers live in one place: tick rate, catch-up cap, pheromone decay/diffusion, food
-spawn, ant energy/lifespan, colony self-sustain (refuel + reproduction), nest geometry, and the
-`TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
+All simulation numbers live in one place: tick rate, catch-up cap, pheromone duration, movement
+weights, food spawn, ant energy/lifespan, colony self-sustain (refuel + reproduction), nest geometry,
+and the `TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
 
 **Notable constants (current values):**
 
@@ -187,6 +188,12 @@ spawn, ant energy/lifespan, colony self-sustain (refuel + reproduction), nest ge
 | `MAX_CATCHUP_TICKS` | `5` | Max ticks the sim loop will replay in one frame after a pause ([§4.6](#46-gamesimulationts--the-orchestrator-and-clock)). |
 | `MAX_FOOD_PER_CELL` | `255` | Per-cell food clamp (matches `Uint8Array`). |
 | `NEST_RADIUS` | `1` | Nest half-extent → a 3×3 block around the derived centre. |
+| `PHEROMONE_DURATION_TICKS` | `20` | Baseline lifetime of a pheromone marker; may grow via future upgrades. |
+| `PHEROMONE_DECREMENT` | `1/20` | Linear decay subtracted from each marker per tick (no diffusion). |
+| `WEIGHT_BASE` / `WEIGHT_TARGET_CELL` | `1` / `50` | Roulette weight floor; bonus for an adjacent goal (food/nest) cell. |
+| `WEIGHT_TRAIL_ON` / `WEIGHT_TRAIL_AGE` | `10` / `20` | On-trail bonus; extra weight scaled by crumb age (bias toward origin). |
+| `WEIGHT_HOMING` | `25` | Fallback nudge toward the nest when no home trail is nearby. |
+| `ANT_CARRY_CAPACITY` | `5` | Max food an ant carries before it must drop the load at the nest. |
 | `ANT_STATE` | `SEARCHING 0, CARRYING 1, RETURNING 2, DEAD 255` | Ant state enum, including the named dead sentinel. |
 | `ANT_MOVE_DIRECTIONS` | N,E,S,W | 4-direction (von Neumann) movement set. |
 | `STARTING_ANTS` | `3` | Ants at colony start. |
@@ -209,7 +216,8 @@ the plans.
 
 Defines the `World`, `Ants`, and `GameState` interfaces (the typed-array layouts from
 [§3.2](#32-data-oriented-design-typed-arrays--structure-of-arrays)). `Ants` includes both `count`
-(live ants) and `capacity` (allocated length). `GameState` bundles everything the simulation needs:
+(live ants) and `capacity` (allocated length), and a per-ant `carried` array (food in hand,
+`0..ANT_CARRY_CAPACITY`). `GameState` bundles everything the simulation needs:
 `tick`, `resources.food`, the `world`, the `ants`, and the `gameOver` / `gameOverReason` / `paused`
 flags.
 
@@ -250,16 +258,19 @@ Owns the grid and everything that happens to cells. Key functions:
 - **`pickupFood` / `dropFood`** — move food between an ant and a cell, clamped to `[0, 255]`.
   `pickupFood` also reverts an emptied cell to **`EMPTY`** terrain, so depleted food stops being
   drawn/treated as food.
-- **`depositPheromone`** — adds to a cell's home/food pheromone, clamped to `1`.
-- **`tickPheromones(world, tick)`** — every `PHEROMONE_DECAY_INTERVAL_TICKS` (2) ticks, multiplies
-  all pheromones by `PHEROMONE_DECAY` (0.995), then diffuses them.
-- **`diffusePheromones(...)`** (internal) — spreads each cell's pheromone toward the average of its
-  4 orthogonal neighbours, weighted by `PHEROMONE_DIFFUSE_AMOUNT` (0.1). It writes into a scratch
-  array and copies back, so a cell's update doesn't corrupt its neighbours' reads mid-pass.
+- **`depositPheromone`** — adds to a cell's home/food pheromone, clamped to `1`. Ants lay at full
+  strength (`1`), so every fresh crumb starts at `1.0` and its later value reflects only its age.
+- **`tickPheromones(world)`** — **every tick**, subtracts `PHEROMONE_DECREMENT` (`1/20`) from every
+  pheromone cell, floored at `0`. This is a **linear** decay: a marker laid at `1.0` fully fades after
+  `PHEROMONE_DURATION_TICKS` (20) ticks, so its remaining value is proportional to its remaining life.
+  There is **no diffusion** — a marker stays exactly on the cell where it was laid.
 
-*Why decay + diffusion?* Together they make trails **fade over time** and **blur outward**, which is
-what turns individual ant deposits into smooth gradients other ants can follow — the core of
-ant-colony-style pathfinding.
+*Why linear decay and no diffusion?* Pheromones are **breadcrumb trails**: an ant lays one crumb per
+step along its whole route ([§4.5](#45-gameantts--the-agents)). Linear decay makes a crumb's **age
+readable from its value** — crumbs laid earlier (near the trail's origin) have decayed more than
+crumbs laid later — which is exactly the gradient other ants follow back to the origin, and which the
+renderer maps to a **shrinking marker**. Outward spreading is deliberately *not* modelled (it would
+blur that gradient); it is reserved for a future in-game upgrade ([§7](#7-planned--future-roadmap-not-yet-built)).
 
 *Why keep `terrain` and `food` in sync?* Both the renderer and the ant pickup logic key off
 `terrain === FOOD`. Setting the terrain when food appears and clearing it when food is exhausted
@@ -272,30 +283,62 @@ Owns ant creation, births, and per-tick behaviour.
 - **`createAnts(count, world)`** — allocates the SoA arrays to `capacity = max(count, ANT_POP_CAP)`
   and seeds `count` ants via `spawnAnt`. `count` tracks the live prefix.
 - **`spawnAnt(ants, world)`** — appends one fresh ant on a random nest cell (scattered across the
-  nest block, each `SEARCHING`, full energy, age 0) if there is capacity; returns `false` when full.
-  Used both at startup and for reproduction.
+  nest block, each `SEARCHING`, full energy, age 0, carrying 0) if there is capacity; returns `false`
+  when full. Used both at startup and for reproduction.
 - **`stepAnts(ants, world, resources, tick)`** — the per-tick update for every ant. In order, for
   each live ant it:
   1. Ages it; if `energy <= 0` **or** `age > ANT_LIFESPAN` (2000), marks it `DEAD`.
-  2. Subtracts `ANT_ENERGY_COST` (1) energy.
-  3. Makes **one** state-weighted move (`moveAnt`): searching ants steer toward food, carrying/
-     returning ants steer home. Reverts the move if it would leave the grid (ants "bounce" off edges).
-  4. Interacts with the destination cell based on state:
-     - **SEARCHING** on a food cell → pick up 1 food, become **CARRYING**, lay food pheromone (0.3).
-     - **CARRYING** on the nest → drop 1 food, become **SEARCHING**, lay home pheromone (0.2).
-     - **RETURNING** on the nest → become **SEARCHING**, lay home pheromone (0.2).
-  5. **Refuel:** if the ant is on the nest, `tick` is a refuel tick (every `ANT_REFUEL_INTERVAL_TICKS`),
-     the colony has food, and the ant is below the cap, spend `ANT_REFUEL_FOOD_COST` (1) colony food
-     to add `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy, clamped to `ANT_INITIAL_ENERGY` (surplus energy
-     is lost, but the food is still spent).
-  6. If a SEARCHING ant's energy is still below 20% after refuel, switch it to **RETURNING**.
+  2. **Recover in place:** if the ant is on the nest and below full energy (and the colony has food),
+     it **stays put** — no move, **no energy cost** — and, on a refuel tick (every
+     `ANT_REFUEL_INTERVAL_TICKS`), converts `ANT_REFUEL_FOOD_COST` (1) colony food into
+     `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy (clamped to the cap). It parks like this until full
+     (a fully-recovered `RETURNING` ant flips back to `SEARCHING`) or until the colony runs dry, then
+     resumes. Recovering costs no upkeep, so energy isn't wasted while topping up.
+  3. Otherwise subtracts `ANT_ENERGY_COST` (1) energy and makes **one** state-weighted move
+     (`moveAnt`): searching ants steer toward food, carrying/returning ants steer home. Reverts the
+     move if it would leave the grid (ants "bounce" off edges).
+  4. Interacts with the destination cell:
+     - **On food** (any state) with spare capacity → picks up food up to `ANT_CARRY_CAPACITY` (5).
+       Collecting takes priority over returning, so even a carrying/returning ant tops up en route. A
+       `SEARCHING` ant that grabs its first food flips to **CARRYING**.
+     - **On the nest** → drops its **whole load** (up to 5) and a **CARRYING**/**RETURNING** ant
+       becomes **SEARCHING**.
+  5. **Lays one breadcrumb** at the destination cell, based on its state *after* the interaction: a
+     **CARRYING** ant lays a **food** trail (origin = the food cell where it flipped to CARRYING);
+     anyone else (**SEARCHING**/**RETURNING**) lays a **home** trail (origin = the nest). Because
+     reaching the nest flips CARRYING → SEARCHING first, an ant **stops laying its food trail the
+     moment it gets home**. This continuous laying — one crumb per step — is what builds the trail.
+  6. If a SEARCHING ant's energy is below 20%, switch it to **RETURNING**.
   - Finally, **`compactAnts`** removes dead ants by shifting live entries down and updating `count`.
-- **`getWeightedDirs(world, x, y, preferHome?)`** — the movement brain. For each of the 4 neighbours
-  it computes a weight: base `1`, `+50` if the cell is food, `+ pheromoneFood * 20`, and (when
-  `preferHome`) `+ pheromoneHome * 30`. It then does **roulette-wheel selection** (via the central
-  RNG) — pick a direction with probability proportional to its weight. *Why weighted-random instead
-  of "always go to the best cell"?* Randomness keeps ants exploring and prevents them all funnelling
-  into a single path, which is what makes emergent trail-following look organic.
+- **`getWeightedDirs(world, x, y, toNest?)`** — the movement brain. For each of the 4 neighbours it
+  computes a weight from named constants, then does **roulette-wheel selection** (via the central RNG)
+  — pick a direction with probability proportional to its weight. A **forager** (`toNest = false`,
+  i.e. SEARCHING) is steered toward food; a **homing** ant (`toNest = true`, i.e. CARRYING/RETURNING)
+  toward the nest. Each neighbour's weight is `WEIGHT_BASE` (1), plus `WEIGHT_TARGET_CELL` (50) if it
+  is the goal cell (food when foraging, nest when homing), plus a **trail term** for the relevant
+  trail (`pheromoneFood` when foraging, `pheromoneHome` when homing): if the crumb value `p > 0`,
+  `WEIGHT_TRAIL_ON` (10) `+ WEIGHT_TRAIL_AGE` (20) `* (1 - p)`.
+  - *Following a trail to its origin.* The origin end of a trail is the **oldest / lowest-value** end
+    (laid first, decayed most). The `(1 - p)` factor makes **older crumbs weigh more**, so the ant is
+    biased down the freshness gradient toward the origin — the food cell for a food trail, the nest
+    for a home trail — while `WEIGHT_TRAIL_ON` keeps it on the trail. Off-trail cells keep only the
+    base weight, preserving exploration.
+  - *Homing fallback.* If a homing ant has **no home pheromone** on any neighbour, it adds
+    `WEIGHT_HOMING` (25) to whichever neighbours reduce its Manhattan distance to the nest centre — so
+    it still converges home without a trail. This is a bias, not an override: roulette still applies.
+    A `RETURNING` ant both lays *and* would follow the home trail, so it can't ride its own trail —
+    it always uses this geometric homing instead.
+  - *Anti-backtracking.* An ant **never steps onto a cell that already carries the trail it is
+    currently laying** (home for SEARCHING/RETURNING, food for CARRYING): such cells are dropped from
+    the candidate set, so the ant moves onto fresh ground instead of re-walking its own trail. Two
+    overrides: a goal cell (food/nest) is never excluded, and a cell that **also** carries the ant's
+    *goal* trail (an overlap of both pheromones) is never excluded — following the trail toward the
+    current objective wins over avoiding the laid one. If avoidance would leave no legal move at all,
+    the full neighbour set is restored (an ant boxed in by its own trail can still move).
+
+*Why weighted-random instead of "always go to the best cell"?* Randomness keeps ants exploring and
+prevents them all funnelling into a single path, which is what makes emergent trail-following look
+organic. The weights are named constants so future gene upgrades can tune them per-colony.
 
 *Ants move exactly once per tick.* Movement weighting is chosen up front from the ant's state, so a
 single `moveAnt` call both steers correctly and interacts with the right cell — carrying/returning
@@ -308,8 +351,8 @@ Ties the world and ants together and drives time.
 - **`createInitialState()`** — builds a fresh `GameState` (world + `STARTING_ANTS` (3) ants + zeroed
   resources).
 - **`tick(state)`** — one logical step (no-op while `paused` or `gameOver`):
-  1. `stepAnts(ants, world, resources, tick)` — move/interact/refuel every ant.
-  2. `tickPheromones(world, tick)` — decay + diffuse (every 2 ticks).
+  1. `stepAnts(ants, world, resources, tick)` — move/interact/lay a breadcrumb/refuel every ant.
+  2. `tickPheromones(world)` — linear decay of every marker (each tick; no diffusion).
   3. `spawnFoodTick(world)` — 2% chance to seed food.
   4. `tick++`.
   5. Every 10 ticks: sweep food out of the nest into `resources.food` (`collectFoodAtNest`, which
@@ -335,10 +378,13 @@ Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, `clientToCell`, an
   screens via `devicePixelRatio`, and allocates an `ImageData` buffer. Reusing the canvas across
   calls makes it cheap for the `ResizeObserver` to invoke on every container resize. The canvas
   background is `#2a2a2a`.
-- **`draw(world, ants)`** — writes directly into the `ImageData` pixel buffer: each cell is coloured
-  by terrain (empty grey, nest amber, food a green gradient by amount), then tinted by any pheromone
-  present, then ants are drawn as small centred squares coloured by state. All colours come from
-  `PALETTE` ([§4.8](#48-renderpalettets--colour-constants)). One `putImageData` blits the frame.
+- **`draw(world, ants)`** — writes directly into the `ImageData` pixel buffer: each cell is filled by
+  terrain (empty grey, nest amber, food a green gradient by amount); then any pheromone is drawn as a
+  **centred square whose side scales with the marker's value** (`fillCellSquare`) — so a marker
+  visibly **shrinks as it decays** and a fully-decayed crumb draws nothing. When both trails share a
+  cell, the larger square is drawn first so the smaller stays visible on top. Finally ants are drawn
+  as small centred squares coloured by state. All colours come from `PALETTE`
+  ([§4.8](#48-renderpalettets--colour-constants)). One `putImageData` blits the frame.
 - **`clientToCell(clientX, clientY)`** — maps a viewport (pointer) coordinate to a grid cell, or
   `null` if outside the canvas. This is what powers the hover tooltip.
 
@@ -422,10 +468,10 @@ The `tick(state)` pipeline:
 
 ```
 tick(state):
-  1. stepAnts(ants, world, resources, tick)   // move once, pick up / drop food, lay pheromones,
-                                               //   age & energy, refuel on the nest (costs food),
-                                               //   mark deaths, compact the arrays
-  2. tickPheromones(world, tick)               // every 2 ticks: decay ×0.995, then diffuse
+  1. stepAnts(ants, world, resources, tick)   // recover-in-place on the nest, else move once,
+                                               //   pick up food (≤5) / drop the load, lay a breadcrumb,
+                                               //   age & energy, mark deaths, compact the arrays
+  2. tickPheromones(world)                     // every tick: linear decay (−1/20), no diffusion
   3. spawnFoodTick(world)                       // 2% chance: seed 20 food (sets FOOD terrain)
   4. tick++                                      // advance the clock
   5. if tick % 10 == 0:                         // every 10 ticks:
@@ -458,7 +504,8 @@ from the *same* pool, so a colony that can't forage enough will shrink and event
    │   (2)    │
    └──────────┘
 
-   Any ant sitting on the nest refuels (spends colony food for energy, every 2 ticks).
+   A below-full ant on the nest recovers in place: it stays still (no move, no energy cost) and
+   refuels (spends colony food for energy, every 2 ticks) until full, then resumes.
    Any state → DEAD (255) when energy <= 0 or age > 2000; removed by compaction.
 ```
 
@@ -499,7 +546,9 @@ so you know where the architecture is heading.
 - **Economy:** Evolution Points (EVO) and prestige **Genome Tokens (GT)** alongside food. Today only
   `resources.food` exists (feeding refuel + reproduction).
 - **Upgrade tree:** stats (speed, energy, lifespan, carry capacity), behaviours, colony (population
-  cap, spawn rate), territory.
+  cap, spawn rate), territory. **Pheromone upgrades** are anticipated by the current design: longer
+  trail duration (`PHEROMONE_DURATION_TICKS`), tunable movement weights (the `WEIGHT_*` constants),
+  and re-introducing **pheromone spreading/diffusion** (deliberately removed for now).
 - **Grid tiers:** expand 32×32 → 64 → 96 → 128 → 160, reallocating typed arrays and copying the old
   world into the centre. Nest geometry is already derived from the grid size, which eases this.
 - **Prestige:** "Ascend Colony" reset that keeps Genome Tokens and a permanent upgrade tree.
@@ -520,9 +569,9 @@ The long list of subsystem bugs and inconsistencies that this document previousl
 
 1. **Colony balance is un-tuned.** The self-sustain loop works mechanically, but the numbers
    (`ANT_POP_CAP` 15, `STARTING_ANTS` 3, refuel 10 energy per 1 food per 2 ticks, reproduction 20
-   food per birth every 20 ticks, and the 1-food-per-trip forage yield) have not been playtested for
-   a satisfying difficulty curve. Refuel and reproduction share one food pool, so the economy can be
-   fragile. *Expect to iterate on `constants.ts`.*
+   food per birth every 20 ticks, and the up-to-`ANT_CARRY_CAPACITY` (5) forage yield per trip) have
+   not been playtested for a satisfying difficulty curve. Refuel and reproduction share one food pool,
+   so the economy can be fragile. *Expect to iterate on `constants.ts`.*
 
 2. **Playwright E2E test is still a placeholder.** `tests/e2e/example.spec.ts` asserts trivialities.
    The unit layer (`tests/rng|world|ant|simulation.test.ts`) covers the pure `game/` logic — including
@@ -554,6 +603,10 @@ For traceability, the following gaps from earlier revisions of this document hav
   food cells revert to `EMPTY`.
 - **Ants move once per tick.** The carrying/returning "double move" is gone; a single state-weighted
   move is followed by one interaction.
+- **Pheromones are breadcrumb trails.** Ants lay one crumb per step along their whole route (not a
+  single drop on discovery); markers decay **linearly** (readable age) and no longer **diffuse**;
+  carrying ants stop laying the food trail on reaching the nest; ants navigate a trail toward its
+  origin; the renderer shrinks each marker in proportion to its remaining value.
 - **`palette.ts` is used.** The renderer imports `PALETTE` instead of hardcoding RGB.
 - **Duplicate constants removed.** `AntState` / `Terrain` no longer shadow `ANT_STATE` / `TERRAIN`.
 - **Magic numbers named/derived.** Nest centre comes from `nestCenter()`; the dead sentinel is
@@ -577,11 +630,18 @@ For traceability, the following gaps from earlier revisions of this document hav
   in a single frame, so a long pause can't cause a "spiral of death."
 - **`requestAnimationFrame` (RAF)** — the browser's "call me before the next repaint" hook; drives the
   loop.
-- **Pheromone** — a scent value stored per cell. **Home pheromone** marks the way back to the nest;
-  **food pheromone** marks where food was found. Ants bias their movement toward stronger pheromones.
-- **Decay** — multiplying all pheromones by a factor < 1 each interval so trails fade over time.
-- **Diffusion** — spreading each cell's pheromone toward its neighbours' average, turning point
-  deposits into smooth gradients.
+- **Pheromone** — a scent value stored per cell, laid one crumb per step as a **breadcrumb trail**.
+  A **home trail** (laid while not carrying) leads back to the nest; a **food trail** (laid while
+  carrying) leads back to the food. A crumb starts at `1.0` and decays linearly, so its value encodes
+  its **age**; ants follow the age gradient back to the trail's **origin**.
+- **Decay** — subtracting a fixed amount (`1/PHEROMONE_DURATION_TICKS`) from every pheromone each
+  tick so a marker fades **linearly** to zero over its duration; its remaining value is proportional
+  to its remaining life (and to its rendered size).
+- **Origin (of a trail)** — the point where the trail was first laid (a food cell for a food trail,
+  the nest for a home trail). It is the **oldest / lowest-value** end, so following the trail toward
+  weaker crumbs leads to it.
+- **Diffusion** — spreading a cell's pheromone toward its neighbours. **Not used** — it would blur the
+  age gradient; reserved for a future in-game upgrade ([§7](#7-planned--future-roadmap-not-yet-built)).
 - **Refuel** — an ant on the nest converting colony food into energy (capped at max energy).
 - **Reproduction** — the colony spending banked food to spawn a new ant (up to the population cap).
 - **Structure-of-Arrays (SoA)** — storing each field of many entities in its own array (parallel
