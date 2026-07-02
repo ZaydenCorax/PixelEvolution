@@ -1,8 +1,10 @@
 # PixelEvolution — Design & Architecture
 
 **Audience:** developers new to this codebase (onboarding reference).
-**Status of the game:** early, playable **prototype** — the core simulation loop is now
-**self-sustaining** (ants refuel and the colony reproduces), but the idle/economy layer is still unbuilt.
+**Status of the game:** early, playable **prototype** — the core simulation loop is
+**self-sustaining** (ants refuel and the colony reproduces) and the main screen now implements the
+**"Instrument" dashboard layout** from `DESIGN_TEMPLATE.dc.html`, but the idle/economy layer behind
+that UI's scaffolded slots is still unbuilt.
 **Status of this document:** describes the code **as it actually exists today**, with a clearly
 separated roadmap for what is planned but not yet built, and an honest list of known gaps.
 
@@ -20,14 +22,21 @@ the grid looking for food, pick it up, carry it back to a central **nest**, and 
 trails that bias where other ants walk. Food collected at the nest is banked as a colony resource
 that keeps ants alive (refuelling) and spawns new ones (reproduction). The visual style is
 deliberately Conway's-Game-of-Life-like: a crisp square grid of coloured cells drawn on an HTML5
-canvas, with a hover tooltip for inspecting individual cells.
+canvas. On top of that base, ants render as **bright haloed discs** (white searching / lime carrying
+/ orange returning) and pheromones as **shrinking, fading breadcrumb squares** in two hues (blue =
+home trail, pink = food trail), so agents never blur into their trails; a hover tooltip inspects
+individual cells.
 
 The long-term intent (see [`.kilo/plans/game-design.md`](../.kilo/plans/game-design.md)) is an
 **idle / incremental** game — gather resources, buy upgrades, expand territory, and "prestige" for
 permanent bonuses. **None of that economy layer exists yet.** What is implemented today is the
 foundational simulation: a world, ants, pheromones, food, a self-sustaining energy/reproduction
-loop, a fixed-rate tick loop, canvas rendering with a responsive resize + hover overlay, and a
-minimal Svelte UI (menu → playing → game over).
+loop, a fixed-rate tick loop with a **1×/2×/4× speed multiplier**, canvas rendering with a
+responsive resize + hover overlay, and a Svelte UI in the "Instrument" dashboard layout — a top
+resource bar, a playback/seed/legend rail on the left, the grid dominant in the middle, and a
+colony-readout rail on the right (menu → playing → game over). The dashboard already **reserves
+space for the economy**: disabled EVO/GT currency chips and a locked Upgrades shelf are scaffolded
+in place, clearly marked with `TODO(economy)` comments.
 
 ### The three plan documents (and how they relate to reality)
 
@@ -44,6 +53,11 @@ history, not as the source of truth — this document is the current reference.
 Where the code deliberately diverges from those plans (for example 4-directional movement and a 3×3
 nest), this document treats the code as correct and explains the reasoning.
 
+One further reference lives at the repo root: [`DESIGN_TEMPLATE.dc.html`](../DESIGN_TEMPLATE.dc.html),
+the **visual mockup of the main simulation screen** (option 1A, "Instrument"). Unlike the three plan
+documents, this one **is implemented**: the current UI layout, colours, typography, and rendering
+style follow it precisely, so treat it as the visual source of truth for the main screen.
+
 ---
 
 ## 2. Tech Stack & Build
@@ -53,13 +67,15 @@ nest), this document treats the code as correct and explains the reasoning.
 | Language | TypeScript (strict) | [`tsconfig.json`](../tsconfig.json) — `strict: true`, `noEmit` (Vite/Svelte handle transpiling). |
 | UI framework | Svelte 5 (runes mode) | [`svelte.config.js`](../svelte.config.js) sets `runes: true`. Only used for the shell UI. |
 | Build tool | Vite 6 | [`vite.config.ts`](../vite.config.ts). Dev server auto-opens the browser. |
-| Rendering | HTML5 Canvas 2D | Via `ImageData` pixel writes — see [§5.4](#54-rendering). |
+| Rendering | HTML5 Canvas 2D | Via 2D draw calls (`fillRect`/`arc`/shadow glow) — see [§5.4](#54-rendering). |
 | State | Plain-TS store module | [`src/stores/gameStore.ts`](../src/stores/gameStore.ts) — *not* a Svelte store. |
 | Tests | Vitest (unit) + Playwright (E2E) | Real unit tests cover the pure `game/` layer ([`tests/`](../tests/)); the Playwright E2E test is still a placeholder. |
 
 **Runtime dependencies: only Svelte.** Everything else (Vite, TypeScript, ESLint, Playwright, etc.)
 is a dev dependency. There is no UI component library; all CSS is hand-written. This keeps the
-shipped bundle tiny, which matches the plan's "< 100 KB gzipped" goal.
+shipped bundle tiny, which matches the plan's "< 100 KB gzipped" goal. The two UI typefaces
+(**Space Grotesk** for interface text, **JetBrains Mono** for numeric readouts) are loaded from the
+Google Fonts CDN in `index.html`, with system-font fallbacks if the CDN is unreachable.
 
 ### Commands
 
@@ -92,6 +108,8 @@ canvas; the renderer draws from the simulation's data; Svelte only owns the surr
      │  loads
      ▼
  src/main.ts ─────────── mounts ──────────►  src/App.svelte   (Svelte UI shell)
+                                                  │  composes src/ui/ (TopBar,
+                                                  │           LeftRail, RightRail)
                                                   │  creates
                                                   ▼
                                          src/stores/gameStore.ts   (glue / lifecycle)
@@ -117,10 +135,11 @@ canvas; the renderer draws from the simulation's data; Svelte only owns the surr
   reactivity overhead.
 - **The renderer reads state; it does not own it.** Every frame it is handed the current `World` and
   `Ants` and paints them. It is a "dumb" projection of state onto pixels.
-- **Svelte owns only the shell.** Which screen is showing, the HUD numbers, the stats table, the
-  hover tooltip — the reactive, human-facing parts. The high-frequency simulation deliberately lives
-  *outside* Svelte's reactivity system, and the UI observes it via an explicit subscription
-  ([§4.9](#49-storesgamestorets--lifecycle-glue)).
+- **Svelte owns only the shell.** Which screen is showing, the top resource bar, the playback and
+  colony rails, the hover tooltip — the reactive, human-facing parts, split into presentational
+  components under `src/ui/` ([§4.11](#411-ui--the-dashboard-components)). The high-frequency
+  simulation deliberately lives *outside* Svelte's reactivity system, and the UI observes it via an
+  explicit subscription ([§4.9](#49-storesgamestorets--lifecycle-glue)).
 
 ### 3.2 Data-oriented design: typed arrays + Structure-of-Arrays
 
@@ -382,29 +401,46 @@ Ties the world and ants together and drives time.
      food.
   7. If `ants.count === 0`, set `gameOver` with reason `"Colony collapsed"`.
 - **`createSimLoop(onTick)`** — the **fixed-timestep accumulator** loop on `requestAnimationFrame`.
-  It banks real elapsed milliseconds and calls `onTick` once per whole `TICK_INTERVAL_MS` (1000 ms).
-  Before draining the accumulator it **clamps the backlog to `MAX_CATCHUP_TICKS` (5)** worth of time,
-  so a long pause (e.g. a backgrounded tab) can't trigger a burst of thousands of ticks in one frame
-  (the classic "spiral of death"). *Why fixed-timestep?* It decouples simulation speed from the
-  display's frame rate, so the game runs the same on a 60 Hz or 144 Hz monitor and can catch up after
-  a delayed frame.
+  It banks real elapsed milliseconds and calls `onTick` once per whole tick interval. That interval
+  is `TICK_INTERVAL_MS / speed`, where `speed` is a **playback multiplier** set via the loop's
+  **`setSpeed(multiplier)`** (1× = 1000 ms; the UI offers 1×/2×/4×). Before draining the accumulator
+  it **clamps the backlog to `MAX_CATCHUP_TICKS` (5)** worth of time, so a long pause (e.g. a
+  backgrounded tab) can't trigger a burst of thousands of ticks in one frame (the classic "spiral of
+  death"). The very first frame after `start()` is seeded with exactly **one** tick's worth of time
+  at the current speed, so the sim starts immediately without bursting `speed` ticks at once. *Why
+  fixed-timestep?* It decouples simulation speed from the display's frame rate, so the game runs the
+  same on a 60 Hz or 144 Hz monitor and can catch up after a delayed frame. *Why scale the interval
+  rather than tick multiple times?* One knob changes pacing while every per-tick rule (decay,
+  refuel cadence, reproduction interval) keeps its meaning — 2× is simply the same colony living
+  twice as fast in wall-clock terms.
 
 ### 4.7 `render/renderer.ts` — canvas painter
 
-Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, `clientToCell`, and `destroy`.
+Turns `World` + `Ants` into pixels, in the visual style of `DESIGN_TEMPLATE.dc.html`. Exposes
+`resize`, `draw`, `clientToCell`, and `destroy`.
 
 - **`resize(w, h)`** — computes an integer `cellSize` from the container's smaller dimension divided
-  by the grid size (minimum 8 px), and (re)sizes a **reused** `<canvas>` element, handling high-DPI
-  screens via `devicePixelRatio`, and allocates an `ImageData` buffer. Reusing the canvas across
-  calls makes it cheap for the `ResizeObserver` to invoke on every container resize. The canvas
-  background is `#2a2a2a`.
-- **`draw(world, ants)`** — writes directly into the `ImageData` pixel buffer: each cell is filled by
-  terrain (empty grey, nest amber, food a green gradient by amount); then any pheromone is drawn as a
-  **centred square whose side scales with the marker's value** (`fillCellSquare`) — so a marker
-  visibly **shrinks as it decays** and a fully-decayed crumb draws nothing. When both trails share a
-  cell, the larger square is drawn first so the smaller stays visible on top. Finally ants are drawn
-  as small centred squares coloured by state. All colours come from `PALETTE`
-  ([§4.8](#48-renderpalettets--colour-constants)). One `putImageData` blits the frame.
+  by the grid size (minimum 6 px), and (re)sizes a **reused** `<canvas>` element. High-DPI screens
+  are handled correctly: the backing store is the CSS size × `devicePixelRatio` and every draw call
+  goes through a `setTransform(dpr, …)` scale, so rendering is crisp at any DPR. Reusing the canvas
+  across calls makes it cheap for the `ResizeObserver` to invoke on every container resize.
+- **`draw(world, ants, hover?)`** — paints the frame with 2D draw calls, back to front:
+  1. **Background + empty cells** — the canvas is filled `PALETTE.bg`, then each cell is inset-filled
+     `PALETTE.cellEmpty`, leaving 1-px grid lines (see below).
+  2. **Pheromone breadcrumbs** — each marker is a **centred square that shrinks and fades with its
+     remaining value** (`side = cellSize × (0.2 + 0.55·v)`, `alpha = 0.22 + 0.55·v`), tinted blue
+     (home) or pink (food), with a soft same-hue glow (`shadowBlur` scaled by `v`). Nest and food
+     cells own their look, so crumbs are skipped there; when both trails share a cell, the larger
+     square is drawn first so the smaller stays visible on top.
+  3. **Solid terrain** — food cells as a green gradient by amount; the nest block amber, with a
+     lighter core at its centre cell.
+  4. **Ants as bright discs** — a dark halo ring, a state-coloured body (white searching / lime
+     carrying / orange returning), and a small specular glint. Discs + halo are what keep ants
+     legible above the crumb squares (the design template's "ants read as bright dots" rule).
+  5. **Hover outline** — if a `hover` cell is passed, it is stroked with an amber outline, marking
+     the cell the tooltip is inspecting.
+
+  All colours come from `PALETTE` ([§4.8](#48-renderpalettets--colour-constants)).
 - **`clientToCell(clientX, clientY)`** — maps a viewport (pointer) coordinate to a grid cell, or
   `null` if outside the canvas. This is what powers the hover tooltip.
 
@@ -413,50 +449,107 @@ Turns `World` + `Ants` into pixels. Exposes `resize`, `draw`, `clientToCell`, an
 - **Grid lines for free.** Each cell is painted from pixel `1` to `cellSize-1`, leaving a 1-px border
   of the canvas background showing through. Those uncovered borders *are* the grid lines — no
   line-drawing loop needed, and the lines stay exactly 1 px at any zoom.
-- **`ImageData` over per-cell `fillRect`.** Writing raw RGBA into one buffer and blitting once is far
-  cheaper than thousands of individual draw calls, which matters as the grid grows.
+- **2D draw calls over `ImageData`.** The renderer previously wrote raw RGBA into an `ImageData`
+  buffer and blitted once. That was cheap but limited to hard-edged squares; the redesign's
+  anti-aliased discs, alpha-blended crumbs, and glows are natural `arc`/`shadowBlur` operations, so
+  the renderer switched to plain draw calls. At 32×32 (~1k cells + ≤15 ants) the per-frame call count
+  is trivial; if the planned grid tiers (up to 160×160) make it a bottleneck, batching or a hybrid
+  `ImageData` base layer can be reintroduced under the same `Renderer` interface.
 
 ### 4.8 `render/palette.ts` — colour constants
 
-Defines a `PALETTE` object of named RGBA colours (empty, nest, food low/high, pheromones, ant
-states). **`renderer.ts` imports and uses `PALETTE`** as its single source of truth for colour — the
-food gradient is a `lerp` between `foodLow` and `foodHigh`, and pheromone tinting / ant colours read
-their channels from the palette.
+Defines a `PALETTE` object of named colour tokens taken from `DESIGN_TEMPLATE.dc.html`: background,
+empty cell, nest (+ lighter core), food low/high, pheromone hues, ant states, ant halo/specular, and
+the hover outline. **`renderer.ts` imports and uses `PALETTE`** as its single source of truth for
+colour. Because the renderer now draws with the 2D API, most entries are CSS colour strings; the two
+exceptions match how they're consumed — `foodLow`/`foodHigh` are RGB tuples (the food gradient is a
+per-channel `lerp` between them) and the pheromone hues are raw `"r,g,b"` strings so the renderer
+can compose a per-crumb alpha into an `rgba(…)` value.
 
 ### 4.9 `stores/gameStore.ts` — lifecycle glue
 
 The bridge between the pure simulation and the UI. `createGameStore(container)` wires up:
 
-- the `GameState`, a `Renderer`, and a set of subscriber callbacks;
+- the `GameState`, a `Renderer`, a set of subscriber callbacks, and the run's **seed**: on creation
+  (and on every `startNewGame`) the store rolls a 6-digit seed — or accepts one — and injects
+  `createSeededRandom(seed)` into `rng.ts` **before** building the world, so a given seed reproduces
+  the exact same run;
 - a **`ResizeObserver`** on the container that re-fits and redraws the canvas whenever the container/
   window changes size (it also fires once on observe to fit the initial size);
 - an **`onTick`** callback that advances the simulation, redraws the canvas, and notifies subscribers;
-- a public API: getters (`state`, `paused`, `gameOver`, `gameOverReason`), `togglePause`, `start`,
-  `stop`, `startNewGame`, `subscribe`, **`cellAt(clientX, clientY)`** (delegates to the renderer's
-  `clientToCell`, for hover), and **`destroy()`** (stops the loop, disconnects the observer, tears
-  down the renderer, clears listeners).
+- a public API:
+  - getters — `state`, `paused`, `gameOver`, `gameOverReason`, **`seed`** (the current run's seed),
+    **`speed`** (the playback multiplier), and **`generation`** (a per-session run counter shown in
+    the top bar; a placeholder until the evolution layer gives "generation" real meaning);
+  - transport — `togglePause`, **`step()`** (advances exactly one tick past `tick()`'s pause guard
+    and leaves the sim paused, so each press moves time by one tick), **`setSpeed(multiplier)`**
+    (forwards to the sim loop), `start`, `stop`;
+  - runs — **`startNewGame(seed?)`**: stops the loop, re-seeds the RNG (fresh roll if no seed is
+    given), rebuilds the state, bumps `generation`, redraws, and restarts the loop. The UI uses this
+    for **Start**, **restart** (passing the current seed to replay the same world), **reroll**
+    (no seed), and **seed editing** (passing the typed seed);
+  - inspection — **`cellAt(clientX, clientY)`** (delegates to the renderer's `clientToCell`, for
+    hover) and **`setHover(cell | null)`** (stores the inspected cell and redraws, so the renderer
+    can outline it);
+  - `subscribe`, and **`destroy()`** (stops the loop, disconnects the observer, tears down the
+    renderer, clears listeners).
 
-*Why a plain-TS store instead of a Svelte store?* The simulation ticks ~every second and mutates big
-typed arrays in place; funnelling that through Svelte's reactivity would be wasteful. The store keeps
-the imperative loop plain and exposes an explicit `subscribe` API for the UI to observe.
+*Why a plain-TS store instead of a Svelte store?* The simulation ticks at 1–4 Hz (depending on the
+speed multiplier) and mutates big typed arrays in place; funnelling that through Svelte's reactivity
+would be wasteful. The store keeps the imperative loop plain and exposes an explicit `subscribe` API
+for the UI to observe.
 
 ### 4.10 `App.svelte` — the UI shell
 
-The only Svelte component. It:
+The root Svelte component. It owns the screens and the dashboard **frame** — a bordered, rounded
+1200×760 panel (shrinking responsively) centred on a radial-gradient page — and composes the three
+`src/ui/` rails around the grid ([§4.11](#411-ui--the-dashboard-components)). It:
 
 - holds a `screen` state (`'menu' | 'playing' | 'gameover'`) and the `store`;
-- on mount, creates the store, **subscribes** to it (each notify bumps a reactive `version` counter),
-  seeds a game, and stops the loop so the menu shows a static world; on teardown it unsubscribes and
-  calls `store.destroy()`;
-- drives all live values off `version`, so the HUD (`food`, `population`, `tick`), the derived stats
-  table (living ants by state with average energy/age), the game-over transition, and the hover
-  tooltip all recompute each tick without relying on Svelte proxying the in-place array mutations;
-- renders a **hover overlay** over the world: `mousemove` maps the cursor to a cell via
-  `store.cellAt`, and a floating **tooltip** shows that cell's coordinates, terrain, food amount,
-  both pheromone levels, and how many ants are on it;
-- renders the menu, the in-game HUD + world container + stats panel, or the game-over card.
+- on mount, creates the store and **subscribes** to it (each notify bumps a reactive `version`
+  counter); the store draws its freshly-seeded world once on creation, so the menu shows a static
+  frame without the loop running. On teardown it unsubscribes and calls `store.destroy()`;
+- drives all live values off `version` — `food`, `population`, `tick`, `paused`, `speed`, `seed`,
+  `generation`, the per-state colony stats (count + average energy/age per `SEARCHING` / `CARRYING`
+  / `RETURNING`), the game-over transition, and the hover tooltip all recompute each tick without
+  relying on Svelte proxying the in-place array mutations;
+- passes those values *down* to the `ui/` components as plain props and receives user intent *up* as
+  callbacks (`onTogglePause`, `onStep`, `onSetSpeed`, `onSeedCommit`, `onReroll`, `onRestart` —
+  restart replays the current seed; reroll draws a fresh one), keeping the rails purely
+  presentational;
+- renders a **hover overlay** over the grid area: `mousemove` maps the cursor to a cell via
+  `store.cellAt`, feeds it to `store.setHover` (which makes the renderer outline the cell), and a
+  floating **cell-inspector tooltip** — monospace, amber-titled `cell (x, y)`, per the design
+  template — shows the cell's terrain, food amount, both pheromone levels (`home φ` / `food φ`),
+  and how many ants are on it;
+- renders the menu and game-over overlays as dark, blurred backdrops with a centred card in the same
+  design language (mono kicker, amber primary button); the game-over card also shows the run's seed
+  so a notable colony can be replayed.
 
 `main.ts` is a three-line bootstrap that mounts `App` into `#app` from `index.html`.
+
+### 4.11 `ui/` — the dashboard components
+
+Three presentational Svelte components (plus `ui/types.ts` for the shared `StateStat` shape)
+implement the "Instrument" layout. They hold no game state — everything arrives as props, and every
+control fires a callback — so they can be restyled or rearranged without touching the store or
+simulation.
+
+- **`TopBar.svelte`** — the 54-px resource bar: brand mark + `colony · gen N` label, the **food**
+  currency chip, and `Tick` / `Pop n/cap` readouts on the right. It also renders two **disabled
+  EVO / GT currency chips with "SOON" badges** — scaffolds (marked `TODO(economy)`) that reserve the
+  top-bar slots for the planned currencies ([§7](#7-planned--future-roadmap-not-yet-built)).
+- **`LeftRail.svelte`** (214 px) — the **playback transport** (Pause/Play primary button,
+  single-step, restart-colony), the **1×/2×/4× speed segment**, the **seed panel** (the current seed
+  shown in mono, click-to-edit with Enter/blur commit and Escape cancel — invalid input is rejected
+  and keeps the old seed — plus a "reroll for a fresh world" action), and the **legend** mapping
+  every on-grid mark (nest, food, the three ant states, both trail hues) to its colour.
+- **`RightRail.svelte`** (256 px) — the **colony readout**: one row per ant state with a dot in the
+  ant's disc colour, a live count, an **average-energy bar** (the searching row's bar is blue per
+  the template — its white dot colour would wash out on the dark rail), and `e`/`age` micro-stats;
+  a **population meter** (`n / cap` with an amber fill); and the **locked Upgrades shelf** — a
+  dashed, dimmed panel listing placeholder upgrades (Move speed, Carry +1, Lifespan) priced in
+  "— EVO", marked `TODO(economy)` and reserved for the economy update.
 
 ---
 
@@ -469,22 +562,24 @@ index.html loads /src/main.ts
    └─ mount(App)
         └─ App onMount:
              ├─ createGameStore(container)
+             │    ├─ rollSeed() → setRandomSource(mulberry32(seed))   (seed the run up front)
              │    ├─ createInitialState()  → 32×32 world, 3×3 nest @ centre, 200 food, 3 ants
-             │    ├─ createRenderer(container) → resize() → draw()   (static first frame)
-             │    └─ ResizeObserver.observe(container)  (keeps the canvas fitted)
-             ├─ store.subscribe(() => version++)   (explicit reactive bridge)
-             ├─ store.startNewGame()   (starts the loop…)
-             └─ store.stop()           (…then stops it, so the menu is paused)
+             │    ├─ createRenderer(container) → resize()   (canvas fitted, reused thereafter)
+             │    └─ ResizeObserver.observe(container) → resize() + draw()   (static first frame)
+             └─ store.subscribe(() => version++)   (explicit reactive bridge)
 ```
 
-The player sees the menu overlaid on a static initial frame. Clicking **Start** calls
-`startNewGame()` again (fresh world, loop running) and sets `screen = 'playing'`.
+The player sees the menu overlaid on a static initial frame — the loop is never started at mount.
+Clicking **Start** calls `startNewGame()` (fresh seed, fresh world, loop running) and sets
+`screen = 'playing'`.
 
 ### 5.2 One tick, end to end
 
-Once running, `createSimLoop` calls `onTick` once per second of accumulated time (bounded by
-`MAX_CATCHUP_TICKS`). `onTick` → `tick(state)` → `renderer.draw(...)` → `notify()` (→ `version++`).
-The `tick(state)` pipeline:
+Once running, `createSimLoop` calls `onTick` once per `TICK_INTERVAL_MS / speed` of accumulated time
+(1 s at 1×, 250 ms at 4×; bounded by `MAX_CATCHUP_TICKS`). `onTick` → `tick(state)` →
+`renderer.draw(...)` → `notify()` (→ `version++`). The transport can also drive time by hand: the
+step button calls `store.step()`, which advances exactly one tick and leaves the sim paused. The
+`tick(state)` pipeline:
 
 ```
 tick(state):
@@ -532,9 +627,13 @@ from the *same* pool, so a colony that can't forage enough will shrink and event
 ### 5.4 Rendering
 
 Rendering is **imperative and outside Svelte**: `onTick` calls `renderer.draw()` directly every tick,
-so the canvas animates regardless of framework reactivity. The `ResizeObserver` re-fits and redraws
-on container/window resize. Svelte only re-renders the HUD/stats/tooltip text when the `version`
-counter (bumped on each store notify) changes.
+so the canvas animates regardless of framework reactivity. The frame is painted back-to-front with 2D
+draw calls — empty cells, glowing breadcrumb crumbs, food/nest terrain, ant discs, hover outline
+([§4.7](#47-renderrendererts--canvas-painter)). Two other paths trigger a redraw between ticks: the
+`ResizeObserver` re-fits and redraws on container/window resize, and `store.setHover` redraws
+immediately when the inspected cell changes (so the amber outline tracks the cursor without waiting
+for the next tick). Svelte only re-renders the rail/top-bar/tooltip text when the `version` counter
+(bumped on each store notify) changes.
 
 ---
 
@@ -547,7 +646,11 @@ counter (bumped on each store notify) changes.
 | **Fixed capacity = `ANT_POP_CAP`** | Births don't reallocate the SoA arrays | Population is hard-capped; growing the cap means re-allocating. |
 | **Fixed-timestep accumulator + catch-up cap** | Frame-rate-independent pacing; a paused tab can't spiral | Ticks beyond the cap are dropped (simulated time is lost after a long pause). |
 | **Food-gated refuel + reproduction (shared pool)** | Closes the core loop; food finally *matters* | Balance is delicate and currently un-tuned (§8). |
-| **Canvas `ImageData` (not DOM cells)** | Scales past the ~10k-element DOM wall; one blit per frame | Lower-level pixel maths; hit-testing is done via `clientToCell`, not DOM. |
+| **Canvas (not DOM cells)** | Scales past the ~10k-element DOM wall | Hit-testing is done via `clientToCell`, not DOM. |
+| **2D draw calls (not `ImageData` pixel writes)** | The template's discs, alpha crumbs, and glows are natural `arc`/`shadowBlur` ops; trivial cost at 32×32 | Per-frame draw calls grow with grid area; may need batching/hybrid at large grid tiers. |
+| **Speed = scaled tick interval (`setSpeed`)** | One knob; every per-tick rule keeps its meaning at any speed | Higher speeds burn wall-clock food/energy faster; balance is only considered at 1×. |
+| **Seed owned by the store, applied before world creation** | A displayed 6-digit seed fully reproduces a run from the UI (restart/reroll/edit) | Reproducibility is from run start only; mid-run state needs the future save system. |
+| **Scaffolded economy UI (EVO/GT chips, locked Upgrades shelf)** | The layout won't need reflowing when the economy lands; slots are visibly reserved | Dead UI in the meantime; must be kept in sync with the eventual design (`TODO(economy)`). |
 | **Single transparent hover overlay (not a CSS grid)** | One element + a coordinate→cell map instead of ~1k divs | No per-cell DOM hooks (fine for a tooltip; revisit if we need per-cell widgets). |
 | **1-px inset for grid lines** | Crisp 1-px lines at any cell size, no extra draw calls | Grid-line colour is fixed to the canvas background. |
 | **Plain-TS store + explicit `subscribe`** | Keeps the 1 Hz mutation loop out of Svelte's reactivity; reactivity is explicit, not proxy-luck | A `version` counter must be threaded through the derived UI values. |
@@ -564,16 +667,22 @@ These come from [`game-design.md`](../.kilo/plans/game-design.md) and are **not 
 so you know where the architecture is heading.
 
 - **Economy:** Evolution Points (EVO) and prestige **Genome Tokens (GT)** alongside food. Today only
-  `resources.food` exists (feeding refuel + reproduction).
+  `resources.food` exists (feeding refuel + reproduction) — but the UI already reserves the slots:
+  the top bar carries disabled **EVO / GT chips** ("SOON"), and the `colony · gen N` label awaits a
+  real generation mechanic (today `generation` just counts runs per session). Look for
+  `TODO(economy)` in `src/ui/` for the exact hook points.
 - **Upgrade tree:** stats (speed, energy, lifespan, carry capacity), behaviours, colony (population
-  cap, spawn rate), territory. **Pheromone upgrades** are anticipated by the current design: longer
-  trail duration (`PHEROMONE_DURATION_TICKS`), tunable movement weights (the `WEIGHT_*` constants),
-  and re-introducing **pheromone spreading/diffusion** (deliberately removed for now).
+  cap, spawn rate), territory. The right rail's **locked Upgrades shelf** scaffolds the first three
+  rows (Move speed, Carry +1, Lifespan) priced in "— EVO". **Pheromone upgrades** are anticipated by
+  the current design: longer trail duration (`PHEROMONE_DURATION_TICKS`), tunable movement weights
+  (the `WEIGHT_*` constants), and re-introducing **pheromone spreading/diffusion** (deliberately
+  removed for now).
 - **Grid tiers:** expand 32×32 → 64 → 96 → 128 → 160, reallocating typed arrays and copying the old
   world into the centre. Nest geometry is already derived from the grid size, which eases this.
 - **Prestige:** "Ascend Colony" reset that keeps Genome Tokens and a permanent upgrade tree.
 - **Persistence:** versioned `localStorage` save schema (`SaveV1`), auto-save, offline catch-up,
-  export/import. The seeded RNG makes reproducible saves feasible.
+  export/import. The seeded RNG makes reproducible saves feasible, and the run's seed is already
+  surfaced (and editable) in the UI — a save would bank the seed plus the elapsed state.
 - **Richer interaction overlay:** the hover tooltip + `ResizeObserver` exist; still planned are
   click/selection actions, per-cell affordances, and any placement/interaction tools from
   [`grid-design.md`](../.kilo/plans/grid-design.md).
@@ -591,27 +700,41 @@ The long list of subsystem bugs and inconsistencies that this document previousl
    (`ANT_POP_CAP` 15, `STARTING_ANTS` 3, refuel 10 energy per 1 food per 2 ticks, reproduction 20
    food per birth every 20 ticks, and the up-to-`ANT_CARRY_CAPACITY` (5) forage yield per trip) have
    not been playtested for a satisfying difficulty curve. Refuel and reproduction share one food pool,
-   so the economy can be fragile. *Expect to iterate on `constants.ts`.*
+   so the economy can be fragile. Balance has only been considered at 1× — the 2×/4× speeds change
+   wall-clock pacing, not the rules, but they haven't been playtested either. *Expect to iterate on
+   `constants.ts`.*
 
 2. **Playwright E2E test is still a placeholder.** `tests/e2e/example.spec.ts` asserts trivialities.
    The unit layer (`tests/rng|world|ant|simulation.test.ts`) covers the pure `game/` logic — including
-   a seeded-determinism check — but there is no real end-to-end coverage of the app.
+   a seeded-determinism check — but there is no real end-to-end coverage of the app, even though the
+   new transport/seed/tooltip surfaces are natural E2E targets (they have been exercised only by
+   ad-hoc scripted runs during development).
 
-3. **High-DPI canvas sizing is imperfect.** `resize` divides the available size by `devicePixelRatio`
-   and blits an unscaled `ImageData`, so on displays with `dpr > 1` the world can render smaller than
-   the container / not fill the backing store. It is correct at `dpr = 1` (typical dev). *Fix: size
-   the `ImageData` to the device pixels (or scale the blit) and stop dividing by `dpr`.*
+3. **Catch-up cap and speed pacing are not unit-tested.** The `MAX_CATCHUP_TICKS` clamp and the
+   `setSpeed` interval scaling both live inside the `requestAnimationFrame`-driven `createSimLoop`
+   and aren't exercised by a test (they need a mocked RAF clock). The logic is simple, but it's
+   currently verified only by inspection and manual runs.
 
-4. **Catch-up cap is not unit-tested.** The `MAX_CATCHUP_TICKS` clamp lives inside the
-   `requestAnimationFrame`-driven `createSimLoop` and isn't exercised by a test (it needs a mocked RAF
-   clock). The logic is simple, but it's currently verified only by inspection.
+4. **`generation` is cosmetic.** The top bar's `colony · gen N` counts `startNewGame` calls in the
+   current session (and resets on reload); it is a placeholder until the evolution layer gives
+   "generation" a real meaning ([§7](#7-planned--future-roadmap-not-yet-built)).
 
-5. **Default RNG re-seeds per load.** The default source is mulberry32 seeded from `Date.now()`, so
-   runs vary between loads but aren't reproducible unless a fixed seed is injected via
-   `setRandomSource`. There is no UI to set/inspect the seed yet (relevant once saves land).
+5. **Seed reproducibility covers run start only.** A seed replays a whole run deterministically from
+   tick 0, but there is no way to capture/restore a run mid-flight — that's the future save system's
+   job. (The seed *is* now surfaced and editable in the UI; see [§8.2](#82-recently-resolved).)
 
-6. **No interaction actions beyond hover.** The overlay reports the hovered cell and shows a tooltip,
-   but there are no click/selection behaviours yet (see [§7](#7-planned--future-roadmap-not-yet-built)).
+6. **UI fonts come from a CDN.** Space Grotesk / JetBrains Mono load from Google Fonts at runtime;
+   offline (or CDN-blocked) sessions fall back to system fonts and lose the intended look. *Fix if it
+   matters: self-host the two families.*
+
+7. **Renderer draw-call count grows with grid area.** The 2D-draw-call approach is comfortably cheap
+   at 32×32, but a 160×160 grid tier (~26k cells) would issue orders of magnitude more calls per
+   frame. The `Renderer` interface hides the strategy, so a batched or hybrid `ImageData` base layer
+   can be swapped in when grid tiers land.
+
+8. **No interaction actions beyond hover.** The overlay reports the hovered cell, outlines it, and
+   shows a tooltip, but there are no click/selection behaviours yet
+   (see [§7](#7-planned--future-roadmap-not-yet-built)).
 
 ### 8.2 Recently resolved
 
@@ -638,18 +761,39 @@ For traceability, the following gaps from earlier revisions of this document hav
   an explicit `version` counter.
 - **Sim-loop catch-up is bounded.** The accumulator is clamped to `MAX_CATCHUP_TICKS`.
 - **Real unit tests exist.** The pure `game/` layer is covered by Vitest specs.
+- **High-DPI canvas sizing is fixed.** The renderer no longer divides the available size by
+  `devicePixelRatio`; the backing store is CSS size × DPR with a `setTransform` scale, so the world
+  fills its container crisply at any DPR (this fell out of the `ImageData` → 2D-draw-call rewrite).
+- **The seed is surfaced in the UI.** The left rail shows the current run's mulberry32 seed,
+  lets the player edit it (reproducing a world) or reroll it, and restart replays it; the game-over
+  card shows it too. The old "no UI to set/inspect the seed" gap is closed (mid-run restore still
+  isn't — see §8.1).
+- **A real transport bar exists.** Play/Pause, single-step (`store.step()` advances exactly one tick
+  and stays paused), 1×/2×/4× speed, and restart replaced the lone Pause button. Resuming at higher
+  speeds no longer bursts several ticks at once (the loop's first frame is seeded with exactly one
+  tick's worth of time at the current speed).
+- **The main screen matches its design template.** The UI was rebuilt to `DESIGN_TEMPLATE.dc.html`
+  (option 1A "Instrument"): docked rails instead of floating panels, integrated per-state colony
+  stats with energy bars and a population meter, a legend, a redesigned mono cell-inspector tooltip
+  with an on-grid hover outline, and ants drawn as haloed discs above two-hue breadcrumb trails so
+  agents and trails are no longer confusable.
 
 ---
 
 ## 9. Glossary
 
-- **Tick** — one logical simulation step. Here the game targets **1 tick per second** (`TICK_RATE_HZ`).
+- **Tick** — one logical simulation step. Here the game targets **1 tick per second** (`TICK_RATE_HZ`)
+  at 1× speed; the speed multiplier shortens the interval, not the step.
 - **Fixed-timestep accumulator** — a loop that advances the simulation in equal-sized steps regardless
   of the display frame rate, by banking real elapsed time and spending it one fixed step at a time.
 - **Catch-up cap** — an upper bound (`MAX_CATCHUP_TICKS`) on how many banked ticks the loop will replay
   in a single frame, so a long pause can't cause a "spiral of death."
 - **`requestAnimationFrame` (RAF)** — the browser's "call me before the next repaint" hook; drives the
   loop.
+- **Speed multiplier** — the playback rate set from the transport bar (1×/2×/4×); it divides the tick
+  interval (`TICK_INTERVAL_MS / speed`) rather than changing any simulation rule.
+- **Transport bar** — the playback controls in the left rail: Play/Pause, single-step (advance one
+  tick and stay paused), the speed segment, and restart-colony.
 - **Pheromone** — a scent value stored per cell, laid one crumb per step as a **breadcrumb trail**.
   A **home trail** (laid while not carrying) leads back to the nest; a **food trail** (laid while
   carrying) leads back to the food. A crumb starts at `1.0` and decays linearly, so its value encodes
@@ -684,9 +828,11 @@ For traceability, the following gaps from earlier revisions of this document hav
 - **Seeded PRNG / mulberry32** — a deterministic pseudo-random generator: the same seed produces the
   same stream, enabling reproducible runs and deterministic tests.
 - **DPR (device pixel ratio)** — how many physical pixels map to one CSS pixel; multiplied into the
-  canvas size so rendering stays crisp on high-DPI screens (with a known caveat, §8.1).
-- **`ImageData`** — a raw RGBA pixel buffer for a canvas; the renderer writes pixels into it and blits
-  it in one call.
+  canvas backing-store size (with a matching `setTransform` scale) so rendering stays crisp on
+  high-DPI screens.
+- **`ImageData`** — a raw RGBA pixel buffer for a canvas. The renderer *used* to write pixels into
+  one and blit it; it now uses 2D draw calls instead ([§4.7](#47-renderrendererts--canvas-painter)),
+  though `ImageData` may return as a batched base layer at large grid tiers.
 - **`ResizeObserver`** — a browser API that fires a callback when an observed element's size changes;
   used to keep the canvas fitted to its container.
 - **`version` counter** — a Svelte `$state` integer bumped on every store notify; the UI's derived
@@ -696,7 +842,11 @@ For traceability, the following gaps from earlier revisions of this document hav
 - **Prestige** — an idle-game reset that trades current progress for a permanent multiplier/currency
   (here, **Genome Tokens**). *Planned, not built.*
 - **EVO (Evolution Points)** — a planned upgrade currency. **GT (Genome Tokens)** — a planned prestige
-  currency. Only **food** exists today.
+  currency. Only **food** exists today; the top bar carries disabled EVO/GT chips as placeholders.
+- **Generation** — the `colony · gen N` label in the top bar. Currently a cosmetic per-session run
+  counter; intended to gain real meaning with the evolution layer.
+- **Seed** — the 6-digit number feeding the mulberry32 PRNG for a run. Shown, editable, and
+  rerollable in the left rail; the same seed replays the same world and run from tick 0.
 - **Grid tier** — a planned world-size upgrade level (32×32 up to 160×160).
 
 ---
