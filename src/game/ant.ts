@@ -5,12 +5,12 @@ import {
   ANT_ENERGY_COST,
   ANT_INITIAL_ENERGY,
   ANT_LIFESPAN,
-  ANT_POP_CAP,
+  ANT_ARRAY_CAPACITY,
   ANT_REFUEL_INTERVAL_TICKS,
   ANT_REFUEL_FOOD_COST,
   ANT_REFUEL_ENERGY_PER_FOOD,
   ANT_CARRY_CAPACITY,
-  ANT_LOW_ENERGY_FRACTION,
+  RETREAT_ENERGY_BUFFER,
   NEST_RADIUS,
   WEIGHT_BASE,
   WEIGHT_TARGET_CELL,
@@ -18,6 +18,9 @@ import {
   WEIGHT_TRAIL_AGE,
   WEIGHT_HOMING,
   WEIGHT_FOOD_SENSE,
+  WEIGHT_MOMENTUM,
+  EPSILON_FOCUSED,
+  EPSILON_WANDER,
   FOOD_SENSE_OFFSETS,
 } from './constants';
 import type { Ants, World as WorldType } from './types';
@@ -32,9 +35,10 @@ import {
 import { randomInt, random } from './rng';
 
 export function createAnts(count: number, world: WorldType): Ants {
-  // Allocate to POP_CAP so the arrays have room for ants born later via spawnAnt
-  // (reproduction, DESIGN.md §8.1). `count` tracks the live prefix [0, count).
-  const capacity = Math.max(count, ANT_POP_CAP);
+  // Allocate to the hard ARRAY_CAPACITY ceiling (not the soft ANT_POP_CAP) so both
+  // reproduction and future +population upgrades have room without reallocating.
+  // `count` tracks the live prefix [0, count).
+  const capacity = Math.max(count, ANT_ARRAY_CAPACITY);
   const x = new Int16Array(capacity);
   const y = new Int16Array(capacity);
   const dir = new Uint8Array(capacity);
@@ -42,8 +46,22 @@ export function createAnts(count: number, world: WorldType): Ants {
   const energy = new Float32Array(capacity);
   const age = new Uint32Array(capacity);
   const carried = new Uint8Array(capacity);
+  const targetX = new Int16Array(capacity).fill(-1);
+  const targetY = new Int16Array(capacity).fill(-1);
 
-  const ants: Ants = { count: 0, capacity, x, y, dir, state, energy, age, carried };
+  const ants: Ants = {
+    count: 0,
+    capacity,
+    x,
+    y,
+    dir,
+    state,
+    energy,
+    age,
+    carried,
+    targetX,
+    targetY,
+  };
 
   for (let i = 0; i < count; i++) {
     spawnAnt(ants, world);
@@ -70,6 +88,8 @@ export function spawnAnt(ants: Ants, world: WorldType): boolean {
   ants.energy[i] = ANT_INITIAL_ENERGY;
   ants.age[i] = 0;
   ants.carried[i] = 0;
+  ants.targetX[i] = -1;
+  ants.targetY[i] = -1;
 
   ants.count++;
   return true;
@@ -127,13 +147,46 @@ export function stepAnts(
 
     ants.energy[i] -= ANT_ENERGY_COST;
 
+    // Food-site memory: the target is the ant's remembered food cell. It is kept
+    // across the whole forage cycle — a carrying/returning ant remembers where it
+    // found food and, once it flips back to SEARCHING at the nest, beelines straight
+    // back (forager shuttling). Cleared only when the remembered cell runs dry, and
+    // EVERY memory-less ant re-smells immediately — crucially, the carrier that just
+    // emptied a cell is standing on the cluster and re-targets a neighbouring food
+    // cell on the spot, so a whole cluster is extracted instead of only its first
+    // discovered cell.
+    if (ants.targetX[i] >= 0) {
+      const tIdx = getCellIndex(world, ants.targetX[i], ants.targetY[i]);
+      if (world.terrain[tIdx] !== TERRAIN.FOOD || world.food[tIdx] === 0) {
+        ants.targetX[i] = -1;
+        ants.targetY[i] = -1;
+      }
+    }
+    if (ants.targetX[i] < 0 || ants.state[i] === ANT_STATE.SEARCHING) {
+      const sensed = nearestSensedFood(world, ants.x[i], ants.y[i]);
+      if (sensed) {
+        // Adopt when memory-less; a searching ant also trades a far memory for
+        // strictly closer food smelled en route (opportunistic — shorter trips
+        // are always the better economics).
+        const curDist =
+          ants.targetX[i] >= 0
+            ? Math.abs(ants.x[i] - ants.targetX[i]) + Math.abs(ants.y[i] - ants.targetY[i])
+            : Infinity;
+        const sensedDist = Math.abs(ants.x[i] - sensed.fx) + Math.abs(ants.y[i] - sensed.fy);
+        if (sensedDist < curDist) {
+          ants.targetX[i] = sensed.fx;
+          ants.targetY[i] = sensed.fy;
+        }
+      }
+    }
+
     const prevX = ants.x[i];
     const prevY = ants.y[i];
 
     // Choose a single move weighted by state (DESIGN.md §4.5): searching ants
-    // steer toward food, carrying/returning ants steer home, and every ant avoids
-    // re-treading the trail it is currently laying. Then interact once.
-    moveAnt(ants, world, i, ants.state[i]);
+    // steer toward their locked food target, carrying/returning ants steer home,
+    // and every ant avoids re-treading the trail it is laying. Then interact once.
+    moveAnt(ants, world, i);
 
     const cx = ants.x[i];
     const cy = ants.y[i];
@@ -191,11 +244,15 @@ export function stepAnts(
       depositPheromone(world, cx, cy, 1, 0);
     }
 
-    if (
-      ants.energy[i] < ANT_INITIAL_ENERGY * ANT_LOW_ENERGY_FRACTION &&
-      ants.state[i] === ANT_STATE.SEARCHING
-    ) {
-      ants.state[i] = ANT_STATE.RETURNING;
+    // Distance-aware retreat: turn back when the remaining energy no longer
+    // comfortably covers the walk home. A distant ant retreats early; one beside
+    // the nest forages almost to empty. This is the sole trigger for heading home.
+    if (ants.state[i] === ANT_STATE.SEARCHING) {
+      const { cx: ncx, cy: ncy } = nestCenter(world);
+      const distHome = Math.abs(ants.x[i] - ncx) + Math.abs(ants.y[i] - ncy);
+      if (ants.energy[i] < distHome + RETREAT_ENERGY_BUFFER) {
+        ants.state[i] = ANT_STATE.RETURNING;
+      }
     }
 
     alive++;
@@ -204,77 +261,93 @@ export function stepAnts(
   compactAnts(ants, alive);
 }
 
-function moveAnt(ants: Ants, world: WorldType, i: number, state: number): void {
+function moveAnt(ants: Ants, world: WorldType, i: number): void {
   const cx = ants.x[i];
   const cy = ants.y[i];
 
-  const dirs = getWeightedDirs(world, cx, cy, state);
-  const chosen = dirs[randomInt(dirs.length)];
+  const chosen = chooseDirection(
+    world,
+    cx,
+    cy,
+    ants.state[i],
+    ants.dir[i],
+    ants.targetX[i],
+    ants.targetY[i],
+    ants.energy[i],
+  );
   ants.dir[i] = chosen;
   const d = ANT_MOVE_DIRECTIONS[chosen];
   ants.x[i] = cx + d.dx;
   ants.y[i] = cy + d.dy;
 }
 
-// The movement brain. Builds a weight per neighbour and returns either the single
-// roulette-picked direction, or the list of valid directions to pick uniformly from
-// when all weights are flat. A homing ant (CARRYING/RETURNING) is steered toward the
-// nest via the home trail; a forager (SEARCHING) toward food.
+// The movement brain. Builds a weight per neighbour, then selects ε-greedily: with
+// probability ε the ant "mutates" (weighted roulette over the candidates — the rare
+// deviation that keeps exploration alive); otherwise it takes the best-weighted step.
+// ε is EPSILON_FOCUSED when any signal weighted in (goal cell, trail, homing bias,
+// locked food target) and EPSILON_WANDER when the ant has nothing to go on. A homing
+// ant (CARRYING/RETURNING) is steered toward the nest; a forager (SEARCHING) toward
+// its locked food target (passed in from stepAnts; -1 = none).
 //
 // "Toward the trail's origin" (spec): the origin end of a trail is the OLDEST /
 // lowest-value end (laid first, so most decayed). Biasing toward older on-trail crumbs
 // — WEIGHT_TRAIL_AGE * (1 - p) — walks the ant back down the gradient to that origin
 // (the food cell for a food trail; the nest for a home trail), while WEIGHT_TRAIL_ON
-// keeps it on the trail. Off-trail cells keep only WEIGHT_BASE, preserving exploration.
+// keeps it on the trail. Off-trail cells keep only WEIGHT_BASE (plus momentum for
+// continuing straight, which makes signal-less wandering cover ground instead of
+// jittering in place).
 //
 // Anti-backtracking: an ant never steps onto a cell that already carries the trail it
 // is *currently laying* (home for SEARCHING/RETURNING, food for CARRYING) — those cells
 // are excluded from the candidate set, so it keeps moving onto fresh ground instead of
 // re-walking its own trail. Goal cells (food/nest) are never excluded, and if avoidance
 // would leave it boxed in with no move, it falls back to the full set of neighbours.
-function getWeightedDirs(
+function chooseDirection(
   world: WorldType,
   x: number,
   y: number,
-  state = ANT_STATE.SEARCHING as number,
-): number[] {
+  state: number,
+  curDir: number,
+  targetX: number,
+  targetY: number,
+  energy: number,
+): number {
   const toNest = state === ANT_STATE.CARRYING || state === ANT_STATE.RETURNING;
   // Which trail is being laid this tick (see the breadcrumb logic in stepAnts).
   const layingFood = state === ANT_STATE.CARRYING;
-  // Navigate by the home trail only when homing AND not avoiding it. Only a CARRYING ant
-  // qualifies: it homes but lays the *food* trail. A RETURNING ant both lays and follows
-  // the home trail, so it can't ride it — it falls back to geometric homing.
-  const navByHome = toNest && layingFood;
+  // Homing ants navigate geometrically only — the nest is their home, its location
+  // is colony knowledge, not something to rediscover. Home pheromone plays no part
+  // in navigation (stale crumbs point anywhere); its remaining job is exploration
+  // spreading via anti-backtracking.
 
   const weights = new Array(4).fill(0);
   const avoided: boolean[] = new Array(4).fill(false);
   const valid: number[] = [];
+  // Set when any purposeful weight (goal / trail / homing / target) applies — this
+  // selects the focused (rare) mutation rate over the wandering one.
+  let hasSignal = false;
 
-  // Homing fallback: when there is no home trail to follow (either none nearby, or the
-  // ant is avoiding its own home trail) a homing ant steers geometrically toward the
-  // nest centre instead (keeps roulette, just biased).
-  let homeTrailNearby = false;
-  if (navByHome) {
-    for (let d = 0; d < 4; d++) {
-      const nx = x + ANT_MOVE_DIRECTIONS[d].dx;
-      const ny = y + ANT_MOVE_DIRECTIONS[d].dy;
-      if (inBounds(world, nx, ny) && world.pheromoneHome[getCellIndex(world, nx, ny)] > 0) {
-        homeTrailNearby = true;
-        break;
-      }
-    }
-  }
-  const nest = toNest && !homeTrailNearby ? nestCenter(world) : null;
+  const { cx: ncx, cy: ncy } = nestCenter(world);
+  const nest = toNest ? { cx: ncx, cy: ncy } : null;
   const curDist = nest ? Math.abs(x - nest.cx) + Math.abs(y - nest.cy) : 0;
 
-  // Food sensing: a searching ant smells the nearest food within its footprint (see
-  // FOOD_SENSE_OFFSETS) and is nudged toward it. This is the forager's analogue of the
-  // homing fallback — it lets an ant re-lock onto nearby food after the food trail has
-  // decayed, so food next to the nest keeps being exploited instead of abandoned.
-  const foodTarget = !toNest ? nearestSensedFood(world, x, y) : null;
-  const curFoodDist = foodTarget
-    ? Math.abs(x - foodTarget.fx) + Math.abs(y - foodTarget.fy)
-    : 0;
+  // The forager's remembered food target (stepAnts senses and commits it). Steering
+  // toward a remembered cell instead of re-smelling every tick is what makes an ant
+  // beeline once food is detected — but only when the round trip is AFFORDABLE:
+  // energy must cover ant → target → nest plus the retreat buffer, or the ant would
+  // march out, hit the retreat threshold partway, and burn its energy on a treadmill
+  // of failed attempts (verified by headless traces). An unaffordable memory is kept
+  // (it's still valid knowledge) — it just doesn't steer until after a full refuel.
+  let hasTarget = false;
+  let curFoodDist = 0;
+  if (!toNest && targetX >= 0) {
+    const distToTarget = Math.abs(x - targetX) + Math.abs(y - targetY);
+    const targetToNest = Math.abs(targetX - ncx) + Math.abs(targetY - ncy);
+    if (energy >= distToTarget + targetToNest + RETREAT_ENERGY_BUFFER) {
+      hasTarget = true;
+      curFoodDist = distToTarget;
+    }
+  }
 
   for (let d = 0; d < 4; d++) {
     const nx = x + ANT_MOVE_DIRECTIONS[d].dx;
@@ -289,45 +362,59 @@ function getWeightedDirs(
     const idx = getCellIndex(world, nx, ny);
     const isGoal = world.terrain[idx] === (toNest ? TERRAIN.NEST : TERRAIN.FOOD);
     let w = WEIGHT_BASE;
-    // A step that carries the ant closer to food it can smell (see foodTarget above).
+    // A step that carries the ant closer to its locked food target.
     let towardFood = false;
 
-    if (isGoal) w += WEIGHT_TARGET_CELL;
+    if (isGoal) {
+      w += WEIGHT_TARGET_CELL;
+      hasSignal = true;
+    }
 
-    if (navByHome) {
-      const p = world.pheromoneHome[idx];
-      if (p > 0) {
-        w += WEIGHT_TRAIL_ON + WEIGHT_TRAIL_AGE * (1 - p);
-      } else if (nest) {
+    if (toNest) {
+      // Pure geometric homing: a homing ant beelines. It gets NO home-trail bonus —
+      // the age-biased trail term scores an old stray crumb (~30) above the homeward
+      // pull (25+1), so stale trail remnants pulled carriers into visible multi-tick
+      // detours away from the nest (measured at ~14% of homing moves before removal).
+      if (nest) {
         const nd = Math.abs(nx - nest.cx) + Math.abs(ny - nest.cy);
-        if (nd < curDist) w += WEIGHT_HOMING;
+        if (nd < curDist) {
+          w += WEIGHT_HOMING;
+          hasSignal = true;
+        }
       }
-    } else if (!toNest) {
+    } else {
       const p = world.pheromoneFood[idx];
       if (p > 0) {
         w += WEIGHT_TRAIL_ON + WEIGHT_TRAIL_AGE * (1 - p);
+        hasSignal = true;
       }
-      if (foodTarget) {
-        const fd = Math.abs(nx - foodTarget.fx) + Math.abs(ny - foodTarget.fy);
+      if (hasTarget) {
+        const fd = Math.abs(nx - targetX) + Math.abs(ny - targetY);
         if (fd < curFoodDist) {
           w += WEIGHT_FOOD_SENSE;
           towardFood = true;
+          hasSignal = true;
         }
       }
-    } else if (nest) {
-      // RETURNING with no followable home trail → pure geometric homing.
-      const nd = Math.abs(nx - nest.cx) + Math.abs(ny - nest.cy);
-      if (nd < curDist) w += WEIGHT_HOMING;
+    }
+
+    // Momentum: continuing straight costs nothing and covers ground, so a FORAGER
+    // gets a small edge for it. Deliberately NOT a signal — a wandering ant should
+    // stay on the high (wander) mutation rate even while walking persistently.
+    // Homing ants get no momentum: they should beeline, and momentum only ever
+    // argued for overshooting past the turn toward home.
+    if (d === curDir && !toNest) {
+      w += WEIGHT_MOMENTUM;
     }
 
     weights[d] = w;
 
     // Anti-backtracking: exclude cells already carrying the trail this ant is laying —
     // BUT never a goal cell, never a cell that also carries the ant's *goal* trail (an
-    // overlap), and never a step toward smelled food. When trails overlap, following the
-    // goal trail wins over avoiding the laid one, so the ant stays on the trail leading
-    // to its current objective; sensed food likewise pulls the ant back through its own
-    // home trail instead of letting the avoidance sweep it away.
+    // overlap), and never a step toward the locked food target. When trails overlap,
+    // following the goal trail wins over avoiding the laid one, so the ant stays on the
+    // trail leading to its current objective; the locked target likewise pulls the ant
+    // back through its own home trail instead of letting the avoidance sweep it away.
     const onLaidTrail = layingFood ? world.pheromoneFood[idx] > 0 : world.pheromoneHome[idx] > 0;
     const onGoalTrail = toNest ? world.pheromoneHome[idx] > 0 : world.pheromoneFood[idx] > 0;
     const backtracking = onLaidTrail && !isGoal && !onGoalTrail && !towardFood;
@@ -338,25 +425,39 @@ function getWeightedDirs(
     avoided[d] = backtracking || avoidNest;
   }
 
-  if (valid.length === 0) return [randomInt(4)];
+  if (valid.length === 0) return randomInt(4);
 
   // Prefer cells that aren't on the ant's own fresh trail; only if that would leave no
   // move at all do we allow stepping back onto it.
   const preferred = valid.filter((d) => !avoided[d]);
   const candidates = preferred.length > 0 ? preferred : valid;
 
-  const total = candidates.reduce((sum, d) => sum + weights[d], 0);
-  if (total <= 0) {
-    return candidates;
+  // ε-greedy selection: rare mutation → weighted roulette; otherwise take the best.
+  const epsilon = hasSignal ? EPSILON_FOCUSED : EPSILON_WANDER;
+  if (random() < epsilon) {
+    const total = candidates.reduce((sum, d) => sum + weights[d], 0);
+    if (total > 0) {
+      let roll = random() * total;
+      for (const d of candidates) {
+        roll -= weights[d];
+        if (roll <= 0) return d;
+      }
+    }
+    return candidates[candidates.length - 1];
   }
 
-  let roll = random() * total;
+  // Argmax with ties resolved to the current direction (keep going straight) or, if
+  // several strangers tie, a random pick among them — a deterministic first-index
+  // tie-break would give ants a systematic directional bias (e.g. always sliding
+  // north along the east wall).
+  let maxW = -Infinity;
   for (const d of candidates) {
-    roll -= weights[d];
-    if (roll <= 0) return [d];
+    if (weights[d] > maxW) maxW = weights[d];
   }
-
-  return [candidates[candidates.length - 1]];
+  const best = candidates.filter((d) => weights[d] === maxW);
+  if (best.length === 1) return best[0];
+  if (best.includes(curDir)) return curDir;
+  return best[randomInt(best.length)];
 }
 
 // The nearest food cell a searching ant can smell from (x, y): scans the sensing
@@ -397,6 +498,8 @@ function compactAnts(ants: Ants, alive: number): void {
       ants.energy[write] = ants.energy[read];
       ants.age[write] = ants.age[read];
       ants.carried[write] = ants.carried[read];
+      ants.targetX[write] = ants.targetX[read];
+      ants.targetY[write] = ants.targetY[read];
     }
     write++;
   }

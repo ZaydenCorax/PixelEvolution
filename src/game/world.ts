@@ -2,13 +2,32 @@ import {
   TERRAIN,
   MAX_FOOD_PER_CELL,
   FOOD_SPAWN_RATE,
-  FOOD_SPAWN_AMOUNT,
-  STARTING_FOOD,
+  FOOD_CELL_MIN,
+  FOOD_CELL_RANGE,
+  FOOD_CELL_EXP,
+  FOOD_CLUSTER_MIN,
+  FOOD_CLUSTER_RANGE,
+  FOOD_CLUSTER_EXP,
+  WORLD_FOOD_CAP,
+  FOOD_SPAWN_MIN_NEST_DIST,
+  STARTING_CLUSTERS,
+  FOUNDER_CACHE_MIN_DIST,
+  FOUNDER_CACHE_MAX_DIST,
+  FOUNDER_CACHE_MIN_FOOD,
+  FOUNDER_CACHE_MAX_FOOD,
   PHEROMONE_DECREMENT,
   NEST_RADIUS,
 } from './constants';
 import { World } from './types';
 import { randomInt, random } from './rng';
+
+// Orthogonal step deltas for growing food blobs (matches ant movement directions).
+const BLOB_DELTAS = [
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 0 },
+] as const;
 
 // The nest sits at the grid centre, derived from the world size rather than
 // hardcoded, so it stays correct if the grid is ever resized (grid tiers).
@@ -37,26 +56,103 @@ export function createWorld(): World {
     }
   }
 
-  spawnFood(food, terrain, w, h, STARTING_FOOD);
+  const world: World = { w, h, terrain, food, pheromoneHome, pheromoneFood };
 
-  return { w, h, terrain, food, pheromoneHome, pheromoneFood };
+  // Starting food: a handful of clusters instead of a uniform scatter. The first is
+  // the founder cache — a guaranteed modest cluster near the nest so the lone
+  // starting ant's first forage is reliable rather than a matter of luck.
+  const founderSeed = pickFounderCacheSeed(world);
+  const founderTotal =
+    FOUNDER_CACHE_MIN_FOOD + randomInt(FOUNDER_CACHE_MAX_FOOD - FOUNDER_CACHE_MIN_FOOD + 1);
+  spawnFoodCluster(world, founderTotal, founderSeed.x, founderSeed.y);
+
+  for (let c = 1; c < STARTING_CLUSTERS; c++) {
+    const seed = pickClusterSeed(world);
+    if (seed) spawnFoodCluster(world, rollClusterTotal(), seed.x, seed.y);
+  }
+
+  return world;
 }
 
-function spawnFood(food: Uint8Array, terrain: Uint8Array, w: number, h: number, total: number): void {
+// A cell's food amount within a cluster: a low-weighted power roll — small amounts
+// are common, rich cells rare. Exported for tests.
+export function rollFoodCellAmount(): number {
+  return FOOD_CELL_MIN + Math.floor(FOOD_CELL_RANGE * Math.pow(random(), FOOD_CELL_EXP));
+}
+
+// A cluster's total food: same low-weighted shape with a heavier tail — most
+// clusters are snacks, ~10% are 150+ jackpots. Exported for tests.
+export function rollClusterTotal(): number {
+  return FOOD_CLUSTER_MIN + Math.floor(FOOD_CLUSTER_RANGE * Math.pow(random(), FOOD_CLUSTER_EXP));
+}
+
+// A random seed cell for a natural cluster: non-nest and clear of the nest's
+// surroundings, so food logistics always involve some travel. Null if unlucky.
+function pickClusterSeed(world: World): { x: number; y: number } | null {
+  const { cx, cy } = nestCenter(world);
+  for (let tries = 0; tries < 20; tries++) {
+    const x = randomInt(world.w);
+    const y = randomInt(world.h);
+    if (Math.abs(x - cx) + Math.abs(y - cy) >= FOOD_SPAWN_MIN_NEST_DIST) {
+      return { x, y };
+    }
+  }
+  return null;
+}
+
+// A seed cell on the Manhattan ring FOUNDER_CACHE_MIN_DIST..MAX_DIST around the
+// nest. Rejection-sampled (the ring is ~7% of the grid, so 100 tries virtually
+// never miss); falls back to a fixed ring cell rather than failing.
+function pickFounderCacheSeed(world: World): { x: number; y: number } {
+  const { cx, cy } = nestCenter(world);
+  for (let tries = 0; tries < 100; tries++) {
+    const x = randomInt(world.w);
+    const y = randomInt(world.h);
+    const d = Math.abs(x - cx) + Math.abs(y - cy);
+    if (d >= FOUNDER_CACHE_MIN_DIST && d <= FOUNDER_CACHE_MAX_DIST) {
+      return { x, y };
+    }
+  }
+  return { x: cx + FOUNDER_CACHE_MIN_DIST, y: cy };
+}
+
+// Grow a contiguous food blob from a seed cell: fill the current cell with a rolled
+// amount, then hop to a random orthogonal neighbour of a random cluster cell, until
+// the total is spent. Bounded attempts so a boxed-in blob (nest/full/edge cells all
+// around) can't loop forever — any unplaced remainder is simply not spawned.
+export function spawnFoodCluster(world: World, total: number, seedX: number, seedY: number): void {
+  const visited = new Set<number>();
+  const cells: number[] = [];
   let remaining = total;
-  while (remaining > 0) {
-    const x = randomInt(w);
-    const y = randomInt(h);
-    const idx = y * w + x;
-    if (terrain[idx] === TERRAIN.NEST) continue;
-    if (food[idx] === 0) {
-      terrain[idx] = TERRAIN.FOOD;
+  let x = seedX;
+  let y = seedY;
+
+  for (let attempts = 0; remaining > 0 && attempts < total + 64; attempts++) {
+    if (inBounds(world, x, y)) {
+      const idx = getCellIndex(world, x, y);
+      if (
+        !visited.has(idx) &&
+        world.terrain[idx] !== TERRAIN.NEST &&
+        world.food[idx] < MAX_FOOD_PER_CELL
+      ) {
+        visited.add(idx);
+        const space = MAX_FOOD_PER_CELL - world.food[idx];
+        const amount = Math.min(rollFoodCellAmount(), remaining, space);
+        if (world.food[idx] === 0) {
+          world.terrain[idx] = TERRAIN.FOOD;
+        }
+        world.food[idx] += amount;
+        remaining -= amount;
+        cells.push(idx);
+      }
     }
-    if (food[idx] < MAX_FOOD_PER_CELL) {
-      const add = Math.min(remaining, MAX_FOOD_PER_CELL - food[idx]);
-      food[idx] += add;
-      remaining -= add;
-    }
+    if (remaining <= 0) break;
+    // Next candidate: a neighbour of a random already-placed cell (keeps the blob
+    // contiguous); before any cell is placed, retry around the seed itself.
+    const base = cells.length > 0 ? cells[randomInt(cells.length)] : getCellIndex(world, seedX, seedY);
+    const d = BLOB_DELTAS[randomInt(4)];
+    x = (base % world.w) + d.dx;
+    y = Math.floor(base / world.w) + d.dy;
   }
 }
 
@@ -115,19 +211,19 @@ export function tickPheromones(world: World): void {
   }
 }
 
+// Natural food spawn: each tick has a FOOD_SPAWN_RATE chance of one cluster spawn
+// event, gated by the world food cap (the check gates the roll, not the amount, so
+// a jackpot cluster may overshoot the cap — deliberate feast/famine).
 export function spawnFoodTick(world: World): void {
   if (random() > FOOD_SPAWN_RATE) return;
 
-  const x = randomInt(world.w);
-  const y = randomInt(world.h);
-  const idx = getCellIndex(world, x, y);
-  if (world.food[idx] < MAX_FOOD_PER_CELL && world.terrain[idx] !== TERRAIN.NEST) {
-    // Mark the cell as FOOD terrain (like spawnFood does) so the renderer draws it
-    // and ants can pick it up — both key off terrain === FOOD (DESIGN.md §8.2).
-    if (world.food[idx] === 0) {
-      world.terrain[idx] = TERRAIN.FOOD;
-    }
-    const add = Math.min(FOOD_SPAWN_AMOUNT, MAX_FOOD_PER_CELL - world.food[idx]);
-    world.food[idx] += add;
+  let totalFood = 0;
+  for (let i = 0; i < world.food.length; i++) {
+    totalFood += world.food[i];
   }
+  if (totalFood >= WORLD_FOOD_CAP) return;
+
+  const seed = pickClusterSeed(world);
+  if (!seed) return;
+  spawnFoodCluster(world, rollClusterTotal(), seed.x, seed.y);
 }

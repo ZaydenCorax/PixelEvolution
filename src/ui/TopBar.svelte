@@ -3,12 +3,16 @@
   let {
     generation,
     food,
+    evoPoints,
+    pendingEvo,
     tick,
     population,
     popCap,
   }: {
     generation: number;
     food: number;
+    evoPoints: number;
+    pendingEvo: number;
     tick: number;
     population: number;
     popCap: number;
@@ -29,12 +33,18 @@
     <span class="chip-label">food</span>
   </div>
 
-  <!-- TODO(economy): EVO and GT are scaffold currencies for the economy update —
-       replace the dashes with live balances once the idle layer lands. -->
-  <div class="chip chip-soon">
-    <span class="chip-value mono soon-value">EVO —</span>
-    <span class="soon-badge">SOON</span>
+  <!-- EVO is live: banked Evolution Points plus what the current run would add on
+       death/Ascend. Watching the pending value grow is the run's visible goal. -->
+  <div class="chip">
+    <span class="chip-swatch evo-swatch"></span>
+    <span class="chip-value mono">
+      {evoPoints.toLocaleString('en-US')}{#if pendingEvo > 0}<span class="evo-pending">
+          (+{pendingEvo})</span
+        >{/if}
+    </span>
+    <span class="chip-label">EVO</span>
   </div>
+  <!-- TODO(economy): GT is a scaffold currency for the prestige-tokens update. -->
   <div class="chip chip-soon">
     <span class="chip-value mono soon-value">GT —</span>
     <span class="soon-badge">SOON</span>
@@ -114,6 +124,15 @@
     height: 11px;
     background: linear-gradient(135deg, #7ed37e, #2f6b3a);
     border-radius: 2px;
+  }
+
+  .evo-swatch {
+    background: linear-gradient(135deg, #c084fc, #6d28d9);
+  }
+
+  .evo-pending {
+    color: #c084fc;
+    font-weight: 500;
   }
 
   .chip-value {

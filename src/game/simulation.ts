@@ -10,6 +10,8 @@ import {
   ANT_POP_CAP,
   ANT_REPRODUCE_INTERVAL_TICKS,
   ANT_REPRODUCE_FOOD_COST,
+  ANT_REPRODUCE_FOOD_RESERVE,
+  EVO_FOOD_DIVISOR,
 } from './constants';
 
 export function createInitialState(): GameState {
@@ -19,12 +21,20 @@ export function createInitialState(): GameState {
   return {
     tick: 0,
     resources: { food: 0 },
+    stats: { lifetimeFoodBanked: 0 },
     world,
     ants,
     paused: false,
     gameOver: false,
     gameOverReason: undefined,
   };
+}
+
+// Evolution Points a run is worth so far. Sub-linear in lifetime banked food so
+// longer runs keep rewarding but early prestige resets stay viable. Earned when the
+// colony dies or the player Ascends (the store banks it; see gameStore.ts).
+export function calcEvoPoints(state: GameState): number {
+  return Math.floor(Math.sqrt(state.stats.lifetimeFoodBanked / EVO_FOOD_DIVISOR));
 }
 
 export function tick(state: GameState): void {
@@ -40,13 +50,17 @@ export function tick(state: GameState): void {
   if (state.tick % 10 === 0) {
     const foodProduced = collectFoodAtNest(state);
     state.resources.food += foodProduced;
+    // Lifetime counter only ever grows (spending doesn't touch it) — it is the
+    // basis of the run's EVO value (calcEvoPoints).
+    state.stats.lifetimeFoodBanked += foodProduced;
   }
 
-  // Reproduction (DESIGN.md §8.1): spend colony food to grow the population,
-  // one birth per interval so growth stays gradual.
+  // Reproduction (DESIGN.md §8.1): spend colony food to grow the population, one
+  // birth per interval so growth stays gradual. The reserve keeps refuel funds in
+  // the bank — reproduction never gets the colony's last food.
   if (
     state.tick % ANT_REPRODUCE_INTERVAL_TICKS === 0 &&
-    state.resources.food >= ANT_REPRODUCE_FOOD_COST &&
+    state.resources.food >= ANT_REPRODUCE_FOOD_COST + ANT_REPRODUCE_FOOD_RESERVE &&
     state.ants.count < ANT_POP_CAP &&
     spawnAnt(state.ants, state.world)
   ) {

@@ -51,6 +51,10 @@
   let seed = $derived.by(() => (void version, store?.seed ?? 0));
   let generation = $derived.by(() => (void version, store ? Math.max(1, store.generation) : 1));
   let ants = $derived.by(() => (void version, store?.state.ants));
+  let evoPoints = $derived.by(() => (void version, store?.evoPoints ?? 0));
+  let pendingEvo = $derived.by(() => (void version, store?.pendingEvo ?? 0));
+  let lastRunEvo = $derived.by(() => (void version, store?.lastRunEvo ?? 0));
+  let ascendUnlocked = $derived.by(() => (void version, store?.ascendUnlocked ?? false));
 
   // Dot colour mirrors the ant disc on the grid; the searching bar is blue per the
   // design template (a white bar would wash out on the dark rail).
@@ -139,7 +143,7 @@
 
 <div class="page">
   <div class="frame">
-    <TopBar {generation} {food} {tick} {population} popCap={ANT_POP_CAP} />
+    <TopBar {generation} {food} {evoPoints} {pendingEvo} {tick} {population} popCap={ANT_POP_CAP} />
 
     <div class="body">
       <LeftRail
@@ -166,7 +170,15 @@
         {/if}
       </div>
 
-      <RightRail stats={antStats} maxEnergy={ANT_INITIAL_ENERGY} {population} popCap={ANT_POP_CAP} />
+      <RightRail
+        stats={antStats}
+        maxEnergy={ANT_INITIAL_ENERGY}
+        {population}
+        popCap={ANT_POP_CAP}
+        {ascendUnlocked}
+        {pendingEvo}
+        onAscend={() => store?.ascend()}
+      />
     </div>
   </div>
 
@@ -214,6 +226,7 @@
         <div class="final-stats">
           <div class="stat-row"><span>Final food</span><span class="stat-value">{Math.floor(food)}</span></div>
           <div class="stat-row"><span>Colony survived</span><span class="stat-value">{tick} ticks</span></div>
+          <div class="stat-row"><span>EVO earned</span><span class="stat-value evo-earned">+{lastRunEvo}</span></div>
           <div class="stat-row"><span>Seed</span><span class="stat-value">{seed}</span></div>
         </div>
         <button class="btn-start" onclick={startGame}>↻ Play Again</button>
@@ -426,5 +439,9 @@
     font-family: 'JetBrains Mono', monospace;
     color: #e7ebf0;
     font-weight: 600;
+  }
+
+  .evo-earned {
+    color: #c084fc;
   }
 </style>

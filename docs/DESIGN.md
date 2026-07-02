@@ -2,9 +2,10 @@
 
 **Audience:** developers new to this codebase (onboarding reference).
 **Status of the game:** early, playable **prototype** — the core simulation loop is
-**self-sustaining** (ants refuel and the colony reproduces) and the main screen now implements the
-**"Instrument" dashboard layout** from `DESIGN_TEMPLATE.dc.html`, but the idle/economy layer behind
-that UI's scaffolded slots is still unbuilt.
+**self-sustaining** (ants refuel and the colony reproduces), the main screen implements the
+**"Instrument" dashboard layout** from `DESIGN_TEMPLATE.dc.html`, and the **prestige core is live**:
+runs earn Evolution Points (EVO) on death or manual Ascension, persisted in `localStorage`. The
+EVO-**spending** layer (the upgrade tree) is still unbuilt — see §7.
 **Status of this document:** describes the code **as it actually exists today**, with a clearly
 separated roadmap for what is planned but not yet built, and an honest list of known gaps.
 
@@ -17,10 +18,13 @@ separated roadmap for what is planned but not yet built, and an honest list of k
 
 ## 1. Project Overview
 
-PixelEvolution is a browser game about a colony of pixel "ants" living on a small grid. Ants wander
-the grid looking for food, pick it up, carry it back to a central **nest**, and drop **pheromone**
-trails that bias where other ants walk. Food collected at the nest is banked as a colony resource
-that keeps ants alive (refuelling) and spawns new ones (reproduction). The visual style is
+PixelEvolution is a browser game about a colony of pixel "ants" living on a small grid. A run
+starts with a **single founder ant** (real colonies start with one queen). Ants seek out food —
+which grows in organic, contiguous **clusters** — pick it up, carry it back to a central **nest**,
+and drop **pheromone** trails that bias where other ants walk. Food collected at the nest is banked
+as a colony resource that keeps ants alive (refuelling) and spawns new ones (reproduction, up to a
+cap of 5). Reaching that cap once permanently unlocks **Ascension** — the manual prestige reset that
+banks the run's **Evolution Points (EVO)**; a colony's death banks them too. The visual style is
 deliberately Conway's-Game-of-Life-like: a crisp square grid of coloured cells drawn on an HTML5
 canvas. On top of that base, ants render as **bright haloed discs** (white searching / lime carrying
 / orange returning) and pheromones as **shrinking, fading breadcrumb squares** in two hues (blue =
@@ -209,39 +213,63 @@ and the `TERRAIN`, `ANT_STATE`, and `ANT_MOVE_DIRECTIONS` enums.
 | `NEST_RADIUS` | `1` | Nest half-extent → a 3×3 block around the derived centre. |
 | `PHEROMONE_DURATION_TICKS` | `20` | Baseline lifetime of a pheromone marker; may grow via future upgrades. |
 | `PHEROMONE_DECREMENT` | `1/20` | Linear decay subtracted from each marker per tick (no diffusion). |
-| `WEIGHT_BASE` / `WEIGHT_TARGET_CELL` | `1` / `50` | Roulette weight floor; bonus for an adjacent goal (food/nest) cell. |
+| `WEIGHT_BASE` / `WEIGHT_TARGET_CELL` | `1` / `50` | Weight floor per neighbour; bonus for an adjacent goal (food/nest) cell. |
 | `WEIGHT_TRAIL_ON` / `WEIGHT_TRAIL_AGE` | `10` / `20` | On-trail bonus; extra weight scaled by crumb age (bias toward origin). |
 | `WEIGHT_HOMING` | `25` | Fallback nudge toward the nest when no home trail is nearby. |
-| `WEIGHT_FOOD_SENSE` | `25` | Nudge a searching ant toward the nearest food within its sensing footprint. |
-| `FOOD_SENSE_OFFSETS` | 12 cells | A searching ant's smell footprint: the 8 surrounding cells + the 4 cardinal cells two steps out. |
+| `WEIGHT_FOOD_SENSE` | `25` | Nudge a searching ant toward its locked food target. |
+| `WEIGHT_MOMENTUM` | `3` | Bonus for continuing straight, **searching ants only** — persistent walks cover ground while exploring; homing ants beeline and get none. |
+| `EPSILON_FOCUSED` / `EPSILON_WANDER` | `0.05` / `0.45` | Mutation rates for ε-greedy movement: chance of a roulette deviation when the ant has a signal / when it is wandering blind. |
+| `FOOD_SENSE_RADIUS` / `FOOD_SENSE_OFFSETS` | `3` / 24 cells | An ant's smell footprint: every cell within Manhattan distance 3 (a diamond). Sized for clustered food — smaller footprints starved colonies within smelling distance of whole clusters. |
 | `ANT_CARRY_CAPACITY` | `5` | Max food an ant carries before it must drop the load at the nest. |
 | `ANT_STATE` | `SEARCHING 0, CARRYING 1, RETURNING 2, DEAD 255` | Ant state enum, including the named dead sentinel. |
 | `ANT_MOVE_DIRECTIONS` | N,E,S,W | 4-direction (von Neumann) movement set. |
-| `STARTING_ANTS` | `3` | Ants at colony start. |
-| `STARTING_FOOD` | `200` | Food scattered on the grid at start. |
+| `FOOD_SPAWN_RATE` | `0.02` | Chance per tick of one natural cluster spawn event. |
+| `FOOD_CELL_MIN/RANGE/EXP` | `5` / `21` / `2` | Per-cell food roll `5 + ⌊21·r²⌋` → 5..25, mean ≈ 12 (low values common). |
+| `FOOD_CLUSTER_MIN/RANGE/EXP` | `5` / `196` / `2.5` | Cluster-total roll `5 + ⌊196·r^2.5⌋` → 5..200, mean ≈ 60, ~10% are 150+ jackpots. |
+| `WORLD_FOOD_CAP` | `150` | Natural spawning pauses while the map holds this much food (jackpots may overshoot — feast/famine). |
+| `FOOD_SPAWN_MIN_NEST_DIST` | `4` | Natural cluster seeds keep this Manhattan distance from the nest centre. |
+| `STARTING_CLUSTERS` | `3` | Food clusters at world creation (the first is the founder cache). |
+| `FOUNDER_CACHE_MIN/MAX_DIST` | `4` / `5` | The founder cache seeds on this Manhattan ring — chosen to overlap the smell radius from the nest edge, so the founder reliably finds it (at 5–7 it routinely didn't). |
+| `FOUNDER_CACHE_MIN/MAX_FOOD` | `30` / `60` | The founder cache's total food roll (uniform). |
+| `STARTING_ANTS` | `1` | A lone founder ant starts the colony. |
 | `ANT_ENERGY_COST` | `1` | Energy spent per ant per tick. |
 | `ANT_INITIAL_ENERGY` | `100` | Starting/`max` energy (also the refuel cap). |
 | `ANT_LIFESPAN` | `2000` | Age (ticks) after which an ant dies of old age. |
-| `ANT_LOW_ENERGY_FRACTION` | `0.2` | Fraction of full energy below which an ant heads home (RETURNING) and recovers. |
-| `ANT_POP_CAP` | `15` | Population cap; also the ant-array `capacity`. |
+| `RETREAT_ENERGY_BUFFER` | `8` | A searching ant turns home when `energy < distToNest + buffer` (distance-aware retreat). |
+| `ANT_POP_CAP` | `5` | Soft population cap (reproduction stops; reaching it once unlocks Ascension). |
+| `ANT_ARRAY_CAPACITY` | `32` | Hard SoA allocation ceiling, decoupled from the soft cap for future +pop upgrades. |
 | `ANT_REFUEL_INTERVAL_TICKS` | `2` | Refuel cadence for an ant sitting on the nest. |
 | `ANT_REFUEL_FOOD_COST` | `1` | Colony food spent per refuel event. |
-| `ANT_REFUEL_ENERGY_PER_FOOD` | `10` | Energy gained per refuel event (clamped to the cap). |
+| `ANT_REFUEL_ENERGY_PER_FOOD` | `20` | Energy gained per refuel event (clamped to the cap). Sets the metabolic price of distance — at 10, far clusters were energy-neutral and colonies starved with a full map. |
 | `ANT_REPRODUCE_INTERVAL_TICKS` | `20` | How often the colony may spawn a new ant. |
 | `ANT_REPRODUCE_FOOD_COST` | `20` | Colony food spent per birth. |
+| `ANT_REPRODUCE_FOOD_RESERVE` | `15` | A birth only fires if the bank keeps this much after paying — reproduction never takes the colony's last food (refuel funds), which previously caused a death spiral. |
+| `EVO_FOOD_DIVISOR` | `10` | EVO earned per run = `⌊√(lifetimeFoodBanked / 10)⌋` (sub-linear). |
 
 *Why 4 directions and not 8?* Fewer choices per step make ant paths less jittery and keep the
 weighted-direction maths cheaper; this superseded an earlier "8-directional (Moore)" decision from
 the plans.
 
+*Balance sanity check (keep this in mind when tuning):* colony upkeep is roughly
+`population / 20` food per tick (1 energy/tick per ant, refuelled at 20 energy per food), i.e.
+**0.25/tick at the cap of 5**, and a round trip to a cluster `d` cells away costs about `d/10`
+food against the ~5 it delivers — distance is the price of food. Nominal spawn inflow is
+2% × ~60 ≈ 1.2/tick gated by `WORLD_FOOD_CAP`, so the map fills while the colony is small and
+tightens as it grows. These numbers were converged by **headless balance runs** (30 seeds × 3000
+ticks, `scratchpad` harness): median first birth ~t60, ~60% of runs reach the Ascension unlock,
+~40% survive the full horizon, the median run banks ~6 EVO, and colonies decline naturally as
+nearby clusters exhaust. Any upgrade touching carry, cap, refuel, or cluster size shifts this
+balance.
+
 ### 4.2 `game/types.ts` — data shapes
 
 Defines the `World`, `Ants`, and `GameState` interfaces (the typed-array layouts from
 [§3.2](#32-data-oriented-design-typed-arrays--structure-of-arrays)). `Ants` includes both `count`
-(live ants) and `capacity` (allocated length), and a per-ant `carried` array (food in hand,
-`0..ANT_CARRY_CAPACITY`). `GameState` bundles everything the simulation needs:
-`tick`, `resources.food`, the `world`, the `ants`, and the `gameOver` / `gameOverReason` / `paused`
-flags.
+(live ants) and `capacity` (allocated length = `ANT_ARRAY_CAPACITY`), a per-ant `carried` array
+(food in hand, `0..ANT_CARRY_CAPACITY`), and per-ant `targetX` / `targetY` arrays (the locked food
+target of a SEARCHING ant; `-1` = none). `GameState` bundles everything the simulation needs:
+`tick`, `resources.food`, `stats.lifetimeFoodBanked` (a grow-only counter feeding the EVO formula),
+the `world`, the `ants`, and the `gameOver` / `gameOverReason` / `paused` flags.
 
 This file defines **only data shapes** — the `ANT_STATE` and `TERRAIN` enums live solely in
 `constants.ts` (the single source of truth). The previously duplicated `AntState` / `Terrain`
@@ -270,13 +298,22 @@ Owns the grid and everything that happens to cells. Key functions:
   hardcoding it, so the nest stays correct if the grid is ever resized. Used by `createWorld`,
   `ant.ts`, and `simulation.ts` so they can't drift out of sync.
 - **`createWorld()`** — allocates the four typed arrays for a **32×32** grid, stamps a nest of
-  `NEST_RADIUS`-extent (3×3) at the derived centre, and scatters `STARTING_FOOD` (200) units of food
-  across non-nest cells.
-- **`spawnFood(...)`** (internal, used at startup) — randomly deposits food, setting a cell's
-  `terrain` to `FOOD` when it first drops food there.
-- **`spawnFoodTick(world)`** — the per-tick natural food spawn (2% chance). Like `spawnFood`, it
-  sets **`terrain = FOOD`** on a newly-seeded cell, so naturally-spawned food is both drawn and
-  harvestable. Draws its randomness from the centralised RNG.
+  `NEST_RADIUS`-extent (3×3) at the derived centre, and seeds `STARTING_CLUSTERS` (3) food clusters:
+  the first is the **founder cache** (seeded on the Manhattan ring 4–5 around the nest with a
+  uniform 30–60 total — the ring overlaps the smell radius from the nest edge, so the lone
+  founder's first forage is genuinely reliable, not luck), the rest are normal rolls.
+- **`rollFoodCellAmount()` / `rollClusterTotal()`** — the low-weighted power rolls behind cluster
+  sizes: per-cell `5 + ⌊21·r²⌋` (5..25, mean ≈ 12) and per-cluster `5 + ⌊196·r^2.5⌋` (5..200,
+  mean ≈ 60). Small values are common; ~10% of clusters are 150+ jackpots.
+- **`spawnFoodCluster(world, total, seedX, seedY)`** — grows a **contiguous blob** from the seed:
+  fills the current cell with a rolled amount (tagging `terrain = FOOD`), then hops to a random
+  orthogonal neighbour of a random cluster cell. Attempts are bounded, so a boxed-in blob simply
+  drops its remainder instead of looping.
+- **`spawnFoodTick(world)`** — the per-tick natural spawn (2% chance of one cluster). Gated by
+  **`WORLD_FOOD_CAP`** (150): while the map holds that much food no new cluster spawns. The check
+  gates the roll, not the amount, so a jackpot may overshoot the cap — deliberate feast/famine
+  texture. Cluster seeds keep `FOOD_SPAWN_MIN_NEST_DIST` (4) away from the nest centre. All
+  randomness comes from the centralised RNG.
 - **`pickupFood` / `dropFood`** — move food between an ant and a cell, clamped to `[0, 255]`.
   `pickupFood` also reverts an emptied cell to **`EMPTY`** terrain, so depleted food stops being
   drawn/treated as food.
@@ -310,25 +347,32 @@ Owns ant creation, births, and per-tick behaviour.
 - **`stepAnts(ants, world, resources, tick)`** — the per-tick update for every ant. In order, for
   each live ant it:
   1. Ages it; if `energy <= 0` **or** `age > ANT_LIFESPAN` (2000), marks it `DEAD`.
-  2. **Recover in place (depleted ants only):** only a **`RETURNING`** ant recovers — a state entered
-     just when energy falls below `ANT_LOW_ENERGY_FRACTION` (20%) of full (step 6). A healthier ant
-     never rests; it keeps foraging. A `RETURNING` ant that is home on the nest and below full energy
+  2. **Recover in place (depleted ants only):** only a **`RETURNING`** ant recovers — a state
+     entered just when its energy stops covering the walk home (step 6). A healthier ant never
+     rests; it keeps foraging. A `RETURNING` ant that is home on the nest and below full energy
      **stays put** — no move, **no energy cost** — and, on a refuel tick (every
      `ANT_REFUEL_INTERVAL_TICKS`), converts `ANT_REFUEL_FOOD_COST` (1) colony food into
-     `ANT_REFUEL_ENERGY_PER_FOOD` (10) energy (clamped to the cap). It parks like this until **full**,
+     `ANT_REFUEL_ENERGY_PER_FOOD` (20) energy (clamped to the cap). It parks like this until **full**,
      then flips back to `SEARCHING` and leaves. If the colony has no food to spare it doesn't sit idle
      — it flips to `SEARCHING` and forages so it can go find food itself. Recovering costs no upkeep,
      so energy isn't wasted while topping up.
-  3. Otherwise subtracts `ANT_ENERGY_COST` (1) energy and makes **one** state-weighted move
-     (`moveAnt`): searching ants steer toward food, carrying/returning ants steer home. Reverts the
-     move if it would leave the grid (ants "bounce" off edges).
-  4. Interacts with the destination cell:
+  3. **Maintains its food-site memory (`targetX/Y`):** the remembered cell is validated (cleared
+     only when it runs dry) and **kept across the whole forage cycle** — a carrying/returning ant
+     remembers where it found food and, back at the nest, beelines straight back (forager
+     shuttling). Any memory-less ant re-smells immediately, so the carrier that just emptied a
+     cell re-targets a neighbouring cluster cell on the spot and whole clusters get extracted; a
+     searching ant also trades a far memory for strictly closer food it smells en route. This is
+     what makes "ant spots food → goes and gets it → comes back for more" visibly purposeful.
+  4. Subtracts `ANT_ENERGY_COST` (1) energy and makes **one** state-weighted move (`moveAnt`):
+     searching ants steer toward their locked target, carrying/returning ants steer home. Reverts
+     the move if it would leave the grid (ants "bounce" off edges).
+  5. Interacts with the destination cell:
      - **On food** (any state) with spare capacity → picks up food up to `ANT_CARRY_CAPACITY` (5).
        Collecting takes priority over returning, so even a carrying/returning ant tops up en route. A
        `SEARCHING` ant that grabs its first food flips to **CARRYING**.
      - **On the nest** → drops its **whole load** (up to 5). A **CARRYING** ant becomes **SEARCHING**;
        a **RETURNING** (depleted) ant stays `RETURNING` so it recovers (step 2) before foraging again.
-  5. **Lays one breadcrumb** at the destination cell, based on its state *after* the interaction: a
+  6. **Lays one breadcrumb** at the destination cell, based on its state *after* the interaction: a
      **CARRYING** ant lays a **food** trail (origin = the food cell where it flipped to CARRYING);
      anyone else (**SEARCHING**/**RETURNING**) lays a **home** trail (origin = the nest). Because
      reaching the nest flips CARRYING → SEARCHING first, an ant **stops laying its food trail the
@@ -336,48 +380,71 @@ Owns ant creation, births, and per-tick behaviour.
      **No trail is laid while standing on a nest cell** (home included): otherwise the nest block
      saturates with home pheromone and the anti-backtracking rule sweeps searching ants outward, away
      from food sitting next to the nest.
-  6. If a SEARCHING ant's energy is below `ANT_LOW_ENERGY_FRACTION` (20%) of full, switch it to
-     **RETURNING** — this is the sole trigger for heading home to recover (step 2).
-  - Finally, **`compactAnts`** removes dead ants by shifting live entries down and updating `count`.
-- **`getWeightedDirs(world, x, y, toNest?)`** — the movement brain. For each of the 4 neighbours it
-  computes a weight from named constants, then does **roulette-wheel selection** (via the central RNG)
-  — pick a direction with probability proportional to its weight. A **forager** (`toNest = false`,
-  i.e. SEARCHING) is steered toward food; a **homing** ant (`toNest = true`, i.e. CARRYING/RETURNING)
-  toward the nest. Each neighbour's weight is `WEIGHT_BASE` (1), plus `WEIGHT_TARGET_CELL` (50) if it
-  is the goal cell (food when foraging, nest when homing), plus a **trail term** for the relevant
-  trail (`pheromoneFood` when foraging, `pheromoneHome` when homing): if the crumb value `p > 0`,
-  `WEIGHT_TRAIL_ON` (10) `+ WEIGHT_TRAIL_AGE` (20) `* (1 - p)`.
+  7. **Distance-aware retreat:** if a SEARCHING ant's energy falls below its Manhattan distance to
+     the nest plus `RETREAT_ENERGY_BUFFER` (8), switch it to **RETURNING** — this is the sole
+     trigger for heading home to recover (step 2). A distant ant turns back early; one beside the
+     nest forages almost to empty. (This replaced a flat 20%-of-full threshold, under which distant
+     ants died mid-walk home even when navigating perfectly.)
+  - Finally, **`compactAnts`** removes dead ants by shifting live entries down (including the
+    target arrays) and updating `count`.
+- **`chooseDirection(world, x, y, state, curDir, targetX, targetY)`** — the movement brain. For
+  each of the 4 neighbours it computes a weight from named constants, then selects **ε-greedily**:
+  with probability ε the ant "mutates" (**roulette-wheel selection**, probability proportional to
+  weight — the rare deviation that keeps exploration alive); otherwise it takes the
+  **best-weighted step** (argmax). ε is `EPSILON_FOCUSED` (0.05) when any signal weighted in (goal
+  cell, trail, homing bias, locked target) and `EPSILON_WANDER` (0.45) when the ant has nothing to
+  go on — so purposeful ants are near-deterministic while wandering stays varied. Argmax ties
+  resolve to the current direction, else randomly among the tied (a first-index tie-break would
+  give ants a systematic directional bias along walls). A **forager** (SEARCHING) is steered toward
+  its locked food target; a **homing** ant (CARRYING/RETURNING) toward the nest. Each neighbour's
+  weight is `WEIGHT_BASE` (1), plus `WEIGHT_TARGET_CELL` (50) if it is the goal cell (food when
+  foraging, nest when homing). A **forager** additionally gets `WEIGHT_MOMENTUM` (3) for continuing
+  straight and a **food-trail term**: if the crumb value `p > 0`, `WEIGHT_TRAIL_ON` (10)
+  `+ WEIGHT_TRAIL_AGE` (20) `* (1 - p)`. A **homing** ant gets neither — no momentum, no trail
+  term — it navigates by pure geometry (below), so trips home are beelines.
   - *Following a trail to its origin.* The origin end of a trail is the **oldest / lowest-value** end
     (laid first, decayed most). The `(1 - p)` factor makes **older crumbs weigh more**, so the ant is
     biased down the freshness gradient toward the origin — the food cell for a food trail, the nest
     for a home trail — while `WEIGHT_TRAIL_ON` keeps it on the trail. Off-trail cells keep only the
     base weight, preserving exploration.
-  - *Homing fallback.* If a homing ant has **no home pheromone** on any neighbour, it adds
-    `WEIGHT_HOMING` (25) to whichever neighbours reduce its Manhattan distance to the nest centre — so
-    it still converges home without a trail. This is a bias, not an override: roulette still applies.
-    A `RETURNING` ant both lays *and* would follow the home trail, so it can't ride its own trail —
-    it always uses this geometric homing instead.
-  - *Food sensing.* The forager's analogue of the homing fallback. A SEARCHING ant smells the nearest
-    food cell within a small footprint — the 8 surrounding cells plus the 4 cardinal cells two steps
-    out (`FOOD_SENSE_OFFSETS`, 12 cells) — and adds `WEIGHT_FOOD_SENSE` (25) to whichever neighbours
-    reduce its Manhattan distance to it. This lets an ant **re-lock onto nearby food after the food
-    trail has decayed**, so food next to the nest keeps being harvested instead of being abandoned the
-    first time an ant strays off it. A sensed-food step also overrides anti-backtracking (below).
+  - *Geometric homing.* Every homing ant (CARRYING/RETURNING) adds `WEIGHT_HOMING` (25) to
+    whichever neighbours reduce its Manhattan distance to the nest centre — the nest is the
+    colony's home; its location is colony knowledge, not something to rediscover. This is a bias,
+    not an override: ε-greedy selection still applies (and under argmax it makes homing
+    near-deterministic, which is what lets depleted ants actually survive the walk home).
+    Home pheromone plays **no** part in homing navigation. Both alternatives were tried and
+    dropped after measurement: navigating by the home-trail age gradient starved colonies in
+    headless runs, and even keeping the trail term as a mere *bonus* let stale off-path crumbs
+    (scoring up to ~30 vs the homeward 26) drag carriers into multi-tick detours — ~14% of homing
+    moves walked *away* from the nest; pure geometry cut that to ~1.5% (just the ε-mutations).
+  - *Food memory.* A SEARCHING ant smells the nearest food cell within its footprint — every cell
+    within Manhattan distance `FOOD_SENSE_RADIUS` (3), a 24-cell diamond scanned by
+    `nearestSensedFood` — and **remembers it** (stored per-ant in `targetX/Y` by `stepAnts`, kept
+    across the whole forage cycle — see step 3 above). Steps that reduce the Manhattan distance to
+    the remembered cell gain `WEIGHT_FOOD_SENSE` (25) — but **only when the round trip is
+    affordable** (`energy ≥ dist(ant→target) + dist(target→nest) + RETREAT_ENERGY_BUFFER`);
+    an unaffordable memory is kept but doesn't steer until after a full refuel, or the ant would
+    burn its energy on a treadmill of half-finished marches. A step toward the target also
+    overrides anti-backtracking (below).
   - *Anti-backtracking.* An ant **never steps onto a cell that already carries the trail it is
     currently laying** (home for SEARCHING/RETURNING, food for CARRYING): such cells are dropped from
     the candidate set, so the ant moves onto fresh ground instead of re-walking its own trail. Two
     overrides: a goal cell (food/nest) is never excluded, a cell that **also** carries the ant's
     *goal* trail (an overlap of both pheromones) is never excluded, and (for a searching ant) a step
-    toward **sensed food** is never excluded — following the trail or scent toward the current
+    toward the **locked target** is never excluded — following the trail or target toward the current
     objective wins over avoiding the laid one. If avoidance would leave no legal move at all, the full
     neighbour set is restored (an ant boxed in by its own trail can still move).
   - *Nest avoidance (searching only).* A SEARCHING ant also excludes **nest cells** — it has no
     business on the nest while foraging, so it routes around the nest block (and promptly walks off it
     if it was parked there refuelling). A homing ant is unaffected, since for it the nest is the goal.
 
-*Why weighted-random instead of "always go to the best cell"?* Randomness keeps ants exploring and
-prevents them all funnelling into a single path, which is what makes emergent trail-following look
-organic. The weights are named constants so future gene upgrades can tune them per-colony.
+*Why ε-greedy instead of pure weighted-random?* Under pure roulette even a heavily-weighted correct
+step is only ~90% likely, and that error compounds every step — ants visibly meandered off known
+food. ε-greedy inverts the model: the best step is the default and deviation is a rare,
+**mutation-like event** (ε is literally the colony's mutation rate, a prime candidate for a future
+gene upgrade with a floor of 2–3% — deviation is how new clusters get discovered). The wander rate
+stays high because variety only helps when there is no signal to exploit. The weights are named
+constants so future gene upgrades can tune them per-colony.
 
 *Ants move exactly once per tick.* Movement weighting is chosen up front from the ant's state, so a
 single `moveAnt` call both steers correctly and interacts with the right cell — carrying/returning
@@ -387,19 +454,25 @@ ants no longer take a hidden second, un-bounds-checked step.
 
 Ties the world and ants together and drives time.
 
-- **`createInitialState()`** — builds a fresh `GameState` (world + `STARTING_ANTS` (3) ants + zeroed
-  resources).
+- **`createInitialState()`** — builds a fresh `GameState` (world + `STARTING_ANTS` (1) founder +
+  zeroed resources and lifetime stats).
 - **`tick(state)`** — one logical step (no-op while `paused` or `gameOver`):
   1. `stepAnts(ants, world, resources, tick)` — move/interact/lay a breadcrumb/refuel every ant.
   2. `tickPheromones(world)` — linear decay of every marker (each tick; no diffusion).
-  3. `spawnFoodTick(world)` — 2% chance to seed food.
+  3. `spawnFoodTick(world)` — 2% chance to seed one food cluster (gated by `WORLD_FOOD_CAP`).
   4. `tick++`.
   5. Every 10 ticks: sweep food out of the nest into `resources.food` (`collectFoodAtNest`, which
-     scans the nest block derived from `nestCenter`).
+     scans the nest block derived from `nestCenter`) and add the same amount to
+     `stats.lifetimeFoodBanked` (grow-only; spending never reduces it).
   6. **Reproduction:** every `ANT_REPRODUCE_INTERVAL_TICKS` (20) ticks, if `resources.food >=`
-     `ANT_REPRODUCE_FOOD_COST` (20) and `ants.count < ANT_POP_CAP` (15), spawn one ant and spend the
-     food.
+     `ANT_REPRODUCE_FOOD_COST + ANT_REPRODUCE_FOOD_RESERVE` (20 + 15) and `ants.count <
+     ANT_POP_CAP` (5), spawn one ant and spend 20 food. The reserve keeps refuel funds in the
+     bank — a birth never takes the colony's last food.
   7. If `ants.count === 0`, set `gameOver` with reason `"Colony collapsed"`.
+- **`calcEvoPoints(state)`** — the run's current EVO value:
+  `⌊√(stats.lifetimeFoodBanked / EVO_FOOD_DIVISOR)⌋`. Sub-linear, so longer runs keep rewarding but
+  early prestige resets stay viable. The **store** banks it (on death or Ascend, [§4.9](#49-storesgamestorets--lifecycle-glue));
+  the pure layer only computes it.
 - **`createSimLoop(onTick)`** — the **fixed-timestep accumulator** loop on `requestAnimationFrame`.
   It banks real elapsed milliseconds and calls `onTick` once per whole tick interval. That interval
   is `TICK_INTERVAL_MS / speed`, where `speed` is a **playback multiplier** set via the loop's
@@ -477,17 +550,28 @@ The bridge between the pure simulation and the UI. `createGameStore(container)` 
 - a **`ResizeObserver`** on the container that re-fits and redraws the canvas whenever the container/
   window changes size (it also fires once on observe to fit the initial size);
 - an **`onTick`** callback that advances the simulation, redraws the canvas, and notifies subscribers;
+- the **prestige meta** that outlives a run: banked `evoPoints` and the one-time `ascendUnlocked`
+  flag are loaded from / saved to `localStorage` (key `pixelevolution.meta.v1`, `try/catch`-guarded
+  so private-mode sessions still play, just without persistence). After every advanced tick the
+  store checks the **unlock** (`ants.count >= ANT_POP_CAP`, once ever) and, on the game-over
+  transition, **banks the run's EVO exactly once** (`calcEvoPoints`); a manual **`ascend()`** banks
+  the same way and immediately starts a fresh run. Manual restart/reroll banks **nothing** — only
+  death or Ascension pay out;
 - a public API:
   - getters — `state`, `paused`, `gameOver`, `gameOverReason`, **`seed`** (the current run's seed),
-    **`speed`** (the playback multiplier), and **`generation`** (a per-session run counter shown in
-    the top bar; a placeholder until the evolution layer gives "generation" real meaning);
+    **`speed`** (the playback multiplier), **`generation`** (a per-session run counter shown in
+    the top bar; a placeholder until the evolution layer gives "generation" real meaning),
+    **`evoPoints`** (banked, persisted), **`pendingEvo`** (what the run would bank now; `0` once
+    banked), **`lastRunEvo`** (what the last ended run banked — shown on the game-over card), and
+    **`ascendUnlocked`**;
   - transport — `togglePause`, **`step()`** (advances exactly one tick past `tick()`'s pause guard
     and leaves the sim paused, so each press moves time by one tick), **`setSpeed(multiplier)`**
     (forwards to the sim loop), `start`, `stop`;
   - runs — **`startNewGame(seed?)`**: stops the loop, re-seeds the RNG (fresh roll if no seed is
     given), rebuilds the state, bumps `generation`, redraws, and restarts the loop. The UI uses this
     for **Start**, **restart** (passing the current seed to replay the same world), **reroll**
-    (no seed), and **seed editing** (passing the typed seed);
+    (no seed), and **seed editing** (passing the typed seed). **`ascend()`** — manual prestige:
+    no-op until unlocked (or on a dead run); banks pending EVO, then `startNewGame()`;
   - inspection — **`cellAt(clientX, clientY)`** (delegates to the renderer's `clientToCell`, for
     hover) and **`setHover(cell | null)`** (stores the inspected cell and redraws, so the renderer
     can outline it);
@@ -510,12 +594,13 @@ The root Svelte component. It owns the screens and the dashboard **frame** — a
   counter); the store draws its freshly-seeded world once on creation, so the menu shows a static
   frame without the loop running. On teardown it unsubscribes and calls `store.destroy()`;
 - drives all live values off `version` — `food`, `population`, `tick`, `paused`, `speed`, `seed`,
-  `generation`, the per-state colony stats (count + average energy/age per `SEARCHING` / `CARRYING`
-  / `RETURNING`), the game-over transition, and the hover tooltip all recompute each tick without
-  relying on Svelte proxying the in-place array mutations;
+  `generation`, `evoPoints` / `pendingEvo` / `lastRunEvo` / `ascendUnlocked`, the per-state colony
+  stats (count + average energy/age per `SEARCHING` / `CARRYING` / `RETURNING`), the game-over
+  transition, and the hover tooltip all recompute each tick without relying on Svelte proxying the
+  in-place array mutations;
 - passes those values *down* to the `ui/` components as plain props and receives user intent *up* as
-  callbacks (`onTogglePause`, `onStep`, `onSetSpeed`, `onSeedCommit`, `onReroll`, `onRestart` —
-  restart replays the current seed; reroll draws a fresh one), keeping the rails purely
+  callbacks (`onTogglePause`, `onStep`, `onSetSpeed`, `onSeedCommit`, `onReroll`, `onRestart`,
+  `onAscend` — restart replays the current seed; reroll draws a fresh one), keeping the rails purely
   presentational;
 - renders a **hover overlay** over the grid area: `mousemove` maps the cursor to a cell via
   `store.cellAt`, feeds it to `store.setHover` (which makes the renderer outline the cell), and a
@@ -523,8 +608,8 @@ The root Svelte component. It owns the screens and the dashboard **frame** — a
   template — shows the cell's terrain, food amount, both pheromone levels (`home φ` / `food φ`),
   and how many ants are on it;
 - renders the menu and game-over overlays as dark, blurred backdrops with a centred card in the same
-  design language (mono kicker, amber primary button); the game-over card also shows the run's seed
-  so a notable colony can be replayed.
+  design language (mono kicker, amber primary button); the game-over card also shows the **EVO the
+  run banked** and its seed so a notable colony can be replayed.
 
 `main.ts` is a three-line bootstrap that mounts `App` into `#app` from `index.html`.
 
@@ -536,9 +621,10 @@ control fires a callback — so they can be restyled or rearranged without touch
 simulation.
 
 - **`TopBar.svelte`** — the 54-px resource bar: brand mark + `colony · gen N` label, the **food**
-  currency chip, and `Tick` / `Pop n/cap` readouts on the right. It also renders two **disabled
-  EVO / GT currency chips with "SOON" badges** — scaffolds (marked `TODO(economy)`) that reserve the
-  top-bar slots for the planned currencies ([§7](#7-planned--future-roadmap-not-yet-built)).
+  currency chip, the **live EVO chip** (violet swatch; banked total plus a `(+N)` pending suffix —
+  watching that number grow is the run's visible goal), and `Tick` / `Pop n/cap` readouts on the
+  right. A **disabled GT chip with a "SOON" badge** still scaffolds the prestige-token slot
+  (marked `TODO(economy)`, [§7](#7-planned--future-roadmap-not-yet-built)).
 - **`LeftRail.svelte`** (214 px) — the **playback transport** (Pause/Play primary button,
   single-step, restart-colony), the **1×/2×/4× speed segment**, the **seed panel** (the current seed
   shown in mono, click-to-edit with Enter/blur commit and Escape cancel — invalid input is rejected
@@ -547,7 +633,10 @@ simulation.
 - **`RightRail.svelte`** (256 px) — the **colony readout**: one row per ant state with a dot in the
   ant's disc colour, a live count, an **average-energy bar** (the searching row's bar is blue per
   the template — its white dot colour would wash out on the dark rail), and `e`/`age` micro-stats;
-  a **population meter** (`n / cap` with an amber fill); and the **locked Upgrades shelf** — a
+  a **population meter** (`n / cap` with an amber fill); the **Ascension panel** — locked ("Reach 5
+  ants to unlock") until the colony first hits the population cap, then a violet **Ascend
+  (+N EVO)** button with a **two-click confirm** (a stray click must not wipe the run; the only
+  UI-local state in the rails is this `confirming` flag); and the **locked Upgrades shelf** — a
   dashed, dimmed panel listing placeholder upgrades (Move speed, Carry +1, Lifespan) priced in
   "— EVO", marked `TODO(economy)` and reserved for the economy update.
 
@@ -562,8 +651,10 @@ index.html loads /src/main.ts
    └─ mount(App)
         └─ App onMount:
              ├─ createGameStore(container)
+             │    ├─ loadMeta()   (banked EVO + Ascension unlock from localStorage)
              │    ├─ rollSeed() → setRandomSource(mulberry32(seed))   (seed the run up front)
-             │    ├─ createInitialState()  → 32×32 world, 3×3 nest @ centre, 200 food, 3 ants
+             │    ├─ createInitialState()  → 32×32 world, 3×3 nest @ centre,
+             │    │     3 food clusters (founder cache on the 5–7 ring), 1 founder ant
              │    ├─ createRenderer(container) → resize()   (canvas fitted, reused thereafter)
              │    └─ ResizeObserver.observe(container) → resize() + draw()   (static first frame)
              └─ store.subscribe(() => version++)   (explicit reactive bridge)
@@ -583,18 +674,23 @@ step button calls `store.step()`, which advances exactly one tick and leaves the
 
 ```
 tick(state):
-  1. stepAnts(ants, world, resources, tick)   // recover-in-place on the nest, else move once,
-                                               //   pick up food (≤5) / drop the load, lay a breadcrumb,
-                                               //   age & energy, mark deaths, compact the arrays
+  1. stepAnts(ants, world, resources, tick)   // recover-in-place on the nest, else lock/validate
+                                               //   a food target, move once (ε-greedy), pick up
+                                               //   food (≤5) / drop the load, lay a breadcrumb,
+                                               //   age & energy, distance-aware retreat, mark
+                                               //   deaths, compact the arrays
   2. tickPheromones(world)                     // every tick: linear decay (−1/20), no diffusion
-  3. spawnFoodTick(world)                       // 2% chance: seed 20 food (sets FOOD terrain)
+  3. spawnFoodTick(world)                       // 2% chance: one cluster (5..200 food, blob-grown),
+                                                //   skipped while the map holds ≥ 150 food
   4. tick++                                      // advance the clock
-  5. if tick % 10 == 0:                         // every 10 ticks:
-        resources.food += collectFoodAtNest(state)   // sweep food out of the nest
-  6. if tick % 20 == 0 and food >= 20 and count < 15:  // reproduction:
+  5. if tick % 10 == 0:                         // every 10 ticks: sweep food out of the nest
+        resources.food += collectFoodAtNest(state)
+        stats.lifetimeFoodBanked += same        //   grow-only counter → EVO
+  6. if tick % 20 == 0 and food >= 35 and count < 5:   // reproduction (20 cost + 15 reserve):
         spawnAnt(); resources.food -= 20              //   one birth per interval
   7. if ants.count == 0:                        // extinction check
         gameOver = true, reason = "Colony collapsed"
+                                                // (the store then banks calcEvoPoints once)
 ```
 
 **The self-sustaining loop:** foragers carry food to the nest → `collectFoodAtNest` banks it in
@@ -612,15 +708,17 @@ from the *same* pool, so a colony that can't forage enough will shrink and event
    └──────────┘   drop food (reached nest)     └──────────┘
         │  ▲                                          │
  energy │  │ reached nest                             │ (both CARRYING and RETURNING
- < 20%  │  │ (become SEARCHING)                       │  head home via home pheromone)
-        ▼  │                                          │
+ < dist │  │ (become SEARCHING)                       │  head home via home pheromone)
+ home+8 ▼  │                                          │
    ┌──────────┐                                       │
    │RETURNING │ ◄─────────────────────────────────────┘
    │   (2)    │
    └──────────┘
 
-   A below-full ant on the nest recovers in place: it stays still (no move, no energy cost) and
-   refuels (spends colony food for energy, every 2 ticks) until full, then resumes.
+   The retreat trigger is distance-aware: energy < Manhattan distance to the nest + 8
+   (RETREAT_ENERGY_BUFFER), so distant ants turn back early and near ones forage longer.
+   A below-full RETURNING ant on the nest recovers in place: it stays still (no move, no energy
+   cost) and refuels (spends colony food for energy, every 2 ticks) until full, then resumes.
    Any state → DEAD (255) when energy <= 0 or age > 2000; removed by compaction.
 ```
 
@@ -657,32 +755,60 @@ for the next tick). Svelte only re-renders the rail/top-bar/tooltip text when th
 | **Centralised, injectable, seeded RNG** | Reproducible saves/replays and deterministic tests | A shared module-level source (one active stream at a time). |
 | **4-directional (von Neumann) movement** | Less jittery paths, cheaper weighting | Ants can't move diagonally. |
 | **3×3 nest at the derived centre** | Small, cosy colony; geometry survives grid resizing | Little room; assumes a centred nest. |
-| **Weighted-random (roulette) movement** | Emergent, organic trail-following | Non-deterministic (unless seeded); harder to unit-test exactly. |
+| **ε-greedy movement (argmax + rare roulette "mutation")** | Purposeful, legible ant behaviour; deviation is a rare event, thematically a mutation rate | Trails funnel harder; exploration rests on the ε floor and the wander rate. |
+| **Per-ant food-site memory (kept across the forage cycle)** | Forager shuttling: ants beeline back to known food and extract whole clusters | Two more SoA arrays; needs the affordability gate or ants death-march to far memories. |
+| **Distance-aware retreat (`dist + 8`)** | No more navigational deaths on the walk home; near-nest ants forage deeper | Retreat point varies by position — less predictable than a flat % threshold. |
+| **Geometric homing for all homing ants** | Reliable trips home (the nest is colony knowledge); home-trail gradients proved too noisy to navigate by | Home trails demoted to exploration-spreading duty (via anti-backtracking). |
+| **Food clusters via blob growth + power-curve rolls** | Discoverable, organic food; rare jackpots create stories | More spawn code; totals can under-fill when a blob is boxed in (accepted). |
+| **World food cap gates spawning (150)** | Self-balancing difficulty: map fills while the colony is small, tightens as it grows | Post-jackpot droughts (deliberate feast/famine). |
+| **Founder cache on the 4–5 ring (inside smell range of the nest edge)** | A 1-ant start survives on skill, not luck | Slightly scripted opening; the ring is always stocked. |
+| **Soft pop cap (5) split from array capacity (32)** | Future +population upgrades won't overflow the SoA arrays | Two constants to keep straight. |
+| **EVO banked on death *or* manual Ascend, same formula** | Failure is the prestige tutorial, not a punishment; no incentive to AFK-die | Ascend needs its own unlock gate (reach the cap once) to stay meaningful. |
+| **Prestige meta in `localStorage` (guarded)** | Progression survives reloads; private mode degrades gracefully | Meta is per-browser; no cloud/export yet ([§7](#7-planned--future-roadmap-not-yet-built)). |
 
 ---
 
 ## 7. Planned / Future Roadmap (not yet built)
 
-These come from [`game-design.md`](../.kilo/plans/game-design.md) and are **not implemented**. Listed
-so you know where the architecture is heading.
+These come from [`game-design.md`](../.kilo/plans/game-design.md) and the prestige design rounds,
+and are **not implemented**. Listed so you know where the architecture is heading — and so the
+agreed upgrade-tree design isn't lost.
 
-- **Economy:** Evolution Points (EVO) and prestige **Genome Tokens (GT)** alongside food. Today only
-  `resources.food` exists (feeding refuel + reproduction) — but the UI already reserves the slots:
-  the top bar carries disabled **EVO / GT chips** ("SOON"), and the `colony · gen N` label awaits a
-  real generation mechanic (today `generation` just counts runs per session). Look for
+- **EVO spending — the upgrade tree.** EVO is now *earned* (death/Ascend, [§4.9](#49-storesgamestorets--lifecycle-glue))
+  but nothing spends it yet; the right rail's **locked Upgrades shelf** scaffolds the slot. The
+  agreed design (record of the 2026-07 design discussion):
+  - **Branches**, roughly in intended unlock order:
+    - *Physiology* — Carry +1 (`ANT_CARRY_CAPACITY`), max energy (`ANT_INITIAL_ENERGY`), lifespan
+      (`ANT_LIFESPAN`), cheaper movement (`ANT_ENERGY_COST`).
+    - *Neurology* — lower mutation rate (`EPSILON_FOCUSED`, **floored at 2–3%** — deviation is how
+      new clusters get discovered, never remove it), +1 sense radius (`FOOD_SENSE_OFFSETS`),
+      pheromone duration (`PHEROMONE_DURATION_TICKS`), and eventually re-introducing **pheromone
+      diffusion** (deliberately removed from the base game).
+    - *Colony* — +1 population cap (**price steeply, ×2–2.5 per level** — at a cap of 5 each +1 is
+      +20% workforce; the SoA arrays already allocate `ANT_ARRAY_CAPACITY` 32 for this), cheaper /
+      faster births (`ANT_REPRODUCE_*`), +1 starting ant.
+    - *Ecology* — bigger clusters (`FOOD_CLUSTER_*`), higher world food cap (`WORLD_FOOD_CAP`),
+      spawn rate (carefully — it bypasses the harvest bottleneck).
+  - **Cost scaling:** ~×1.7 per level baseline (steeper for pop cap, above). First purchases should
+    be affordable from run one or two (~3–5 EVO; a decent first run banks ~4–6).
+  - **In-run purchases** (spent from *food*, reset on prestige — the in-run decision layer that
+    gives banking food an opportunity cost): *Brood Chamber* (+2 pop cap this run), *Granary*
+    (+food per nest sweep), *Pheromone Glands* (+trail duration this run).
+  - **Distribution tuning hook:** if 150+ jackpot clusters feel too routine (~10% today), switch
+    the cluster-total roll to two tiers — 90% `5 + ⌊90·r²⌋` (mean ≈ 35), 10% uniform 120–200 —
+    which keeps the mean ~57 while making jackpots genuinely rare.
+- **Generation & GT:** the `colony · gen N` label awaits a real generation mechanic (today
+  `generation` just counts runs per session), and **Genome Tokens (GT)** remain the planned second
+  prestige layer above EVO — the top bar's disabled GT chip ("SOON") reserves the slot. Look for
   `TODO(economy)` in `src/ui/` for the exact hook points.
-- **Upgrade tree:** stats (speed, energy, lifespan, carry capacity), behaviours, colony (population
-  cap, spawn rate), territory. The right rail's **locked Upgrades shelf** scaffolds the first three
-  rows (Move speed, Carry +1, Lifespan) priced in "— EVO". **Pheromone upgrades** are anticipated by
-  the current design: longer trail duration (`PHEROMONE_DURATION_TICKS`), tunable movement weights
-  (the `WEIGHT_*` constants), and re-introducing **pheromone spreading/diffusion** (deliberately
-  removed for now).
 - **Grid tiers:** expand 32×32 → 64 → 96 → 128 → 160, reallocating typed arrays and copying the old
   world into the centre. Nest geometry is already derived from the grid size, which eases this.
 - **Prestige:** "Ascend Colony" reset that keeps Genome Tokens and a permanent upgrade tree.
-- **Persistence:** versioned `localStorage` save schema (`SaveV1`), auto-save, offline catch-up,
-  export/import. The seeded RNG makes reproducible saves feasible, and the run's seed is already
-  surfaced (and editable) in the UI — a save would bank the seed plus the elapsed state.
+- **Persistence:** the prestige meta (banked EVO + Ascension unlock) already persists under
+  `pixelevolution.meta.v1`. Still planned: a versioned **run** save schema (`SaveV1`), auto-save,
+  offline catch-up, export/import. The seeded RNG makes reproducible saves feasible, and the run's
+  seed is already surfaced (and editable) in the UI — a save would bank the seed plus the elapsed
+  state.
 - **Richer interaction overlay:** the hover tooltip + `ResizeObserver` exist; still planned are
   click/selection actions, per-cell affordances, and any placement/interaction tools from
   [`grid-design.md`](../.kilo/plans/grid-design.md).
@@ -696,13 +822,16 @@ The long list of subsystem bugs and inconsistencies that this document previousl
 
 ### 8.1 Remaining gaps
 
-1. **Colony balance is un-tuned.** The self-sustain loop works mechanically, but the numbers
-   (`ANT_POP_CAP` 15, `STARTING_ANTS` 3, refuel 10 energy per 1 food per 2 ticks, reproduction 20
-   food per birth every 20 ticks, and the up-to-`ANT_CARRY_CAPACITY` (5) forage yield per trip) have
-   not been playtested for a satisfying difficulty curve. Refuel and reproduction share one food pool,
-   so the economy can be fragile. Balance has only been considered at 1× — the 2×/4× speeds change
-   wall-clock pacing, not the rules, but they haven't been playtested either. *Expect to iterate on
-   `constants.ts`.*
+1. **Colony balance is simulation-validated, not playtested.** The 2026-07 rebalance (founder
+   start, cap 5, food clusters, world cap, ε-greedy movement, food memory, refuel 20, reproduction
+   reserve, beeline homing) was converged through **headless balance runs** (30 seeds × 3000
+   ticks): median first birth ~t60, ~60% of runs reach the Ascension unlock, ~40% survive the full
+   horizon, the median run banks ~6 EVO, and colonies follow a peak-then-decline arc as nearby
+   clusters exhaust (death feeds the prestige loop by design). Runs that fail tend to fail *early*
+   (an unlucky founder before the first birth) — if that feels too punishing in real play, the
+   founder-cache roll is the knob. What it *feels* like at the screen — pacing, legibility,
+   whether Ascend timing is an interesting decision — still needs real play sessions, and balance
+   has only been considered at 1×. *Expect to iterate on `constants.ts`.*
 
 2. **Playwright E2E test is still a placeholder.** `tests/e2e/example.spec.ts` asserts trivialities.
    The unit layer (`tests/rng|world|ant|simulation.test.ts`) covers the pure `game/` logic — including
@@ -718,6 +847,10 @@ The long list of subsystem bugs and inconsistencies that this document previousl
 4. **`generation` is cosmetic.** The top bar's `colony · gen N` counts `startNewGame` calls in the
    current session (and resets on reload); it is a placeholder until the evolution layer gives
    "generation" a real meaning ([§7](#7-planned--future-roadmap-not-yet-built)).
+
+4b. **EVO has nothing to buy yet.** Runs earn and bank EVO (persisted), but the upgrade tree that
+   spends it is unbuilt — the currency is currently a score. The agreed tree design is recorded in
+   [§7](#7-planned--future-roadmap-not-yet-built) so it isn't lost.
 
 5. **Seed reproducibility covers run start only.** A seed replays a whole run deterministically from
    tick 0, but there is no way to capture/restore a run mid-flight — that's the future save system's
@@ -839,10 +972,33 @@ For traceability, the following gaps from earlier revisions of this document hav
   values depend on it so they recompute each tick without relying on proxying in-place mutations.
 - **Idle / incremental game** — a genre built around numbers steadily growing, upgrades, and progress
   that continues (or accrues) while the player is away.
-- **Prestige** — an idle-game reset that trades current progress for a permanent multiplier/currency
-  (here, **Genome Tokens**). *Planned, not built.*
-- **EVO (Evolution Points)** — a planned upgrade currency. **GT (Genome Tokens)** — a planned prestige
-  currency. Only **food** exists today; the top bar carries disabled EVO/GT chips as placeholders.
+- **Prestige** — an idle-game reset that trades current progress for a permanent currency. The first
+  layer is **live**: Ascension banks EVO. A second layer (**Genome Tokens**) is planned.
+- **EVO (Evolution Points)** — the prestige currency, **earned today**: a run banks
+  `⌊√(lifetimeFoodBanked / 10)⌋` EVO on colony death or manual Ascension (persisted in
+  `localStorage`). *Spending* EVO (the upgrade tree) is not built yet ([§7](#7-planned--future-roadmap-not-yet-built)).
+  **GT (Genome Tokens)** — the planned second prestige currency; its top-bar chip is a disabled
+  placeholder.
+- **Ascension / Ascend** — the manual prestige reset: banks the run's pending EVO and starts a fresh
+  colony. Permanently unlocked the first time a colony reaches the population cap (5).
+- **Pending EVO** — what the current run would bank if it ended now; shown as `(+N)` on the top-bar
+  EVO chip and zeroed once the run has banked (death or Ascend).
+- **Mutation (movement)** — the rare ε-probability event where an ant deviates from its best step
+  into a weighted-roulette pick (`EPSILON_FOCUSED` 5% with a signal, `EPSILON_WANDER` 45% while
+  wandering blind). The name is deliberate: ε is the colony's evolvable mutation rate.
+- **Food memory / target** — an ant's per-ant remembered food cell (`targetX/Y`), kept across the
+  whole forage cycle so it shuttles back after each delivery; cleared only when the cell runs dry
+  (whereupon any ant re-smells on the spot). Steering toward it requires the round trip to be
+  **affordable** (energy covers ant → target → nest + the retreat buffer).
+- **Distance-aware retreat** — the trigger for heading home: `energy < distToNest +
+  RETREAT_ENERGY_BUFFER (8)`, replacing the old flat 20%-of-full threshold.
+- **Food cluster** — a contiguous blob of food cells grown from a seed cell; per-cell amounts
+  (5..25) and cluster totals (5..200) come from low-weighted power rolls, so snacks are common and
+  150+ **jackpots** rare (~10%).
+- **Founder cache** — the guaranteed starting cluster on the Manhattan 4–5 ring around the nest
+  (30–60 food), inside smell range of the nest edge so the lone founder's first forage is reliable.
+- **World food cap** — natural cluster spawning pauses while the map holds ≥ `WORLD_FOOD_CAP` (150)
+  food; the map fills while the colony is small and tightens as it grows (a difficulty rubber-band).
 - **Generation** — the `colony · gen N` label in the top bar. Currently a cosmetic per-session run
   counter; intended to gain real meaning with the evolution layer.
 - **Seed** — the 6-digit number feeding the mulberry32 PRNG for a run. Shown, editable, and

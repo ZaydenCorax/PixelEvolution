@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Right rail (DESIGN_TEMPLATE 1A): colony readout, population meter, upgrades shelf.
+  // Right rail (DESIGN_TEMPLATE 1A): colony readout, population meter, ascension
+  // panel, upgrades shelf.
   import type { StateStat } from './types';
 
   let {
@@ -7,12 +8,30 @@
     maxEnergy,
     population,
     popCap,
+    ascendUnlocked,
+    pendingEvo,
+    onAscend,
   }: {
     stats: StateStat[];
     maxEnergy: number;
     population: number;
     popCap: number;
+    ascendUnlocked: boolean;
+    pendingEvo: number;
+    onAscend: () => void;
   } = $props();
+
+  // Two-click confirm: Ascend ends the run, so a stray click must not wipe it.
+  let confirming = $state(false);
+
+  function handleAscend() {
+    if (!confirming) {
+      confirming = true;
+      return;
+    }
+    confirming = false;
+    onAscend();
+  }
 </script>
 
 <div class="rail">
@@ -56,6 +75,26 @@
   </div>
 
   <div class="spacer"></div>
+
+  <!-- Manual prestige: locked until the colony reaches the population cap once
+       (ever, persisted). Ascending banks the run's pending EVO and starts fresh. -->
+  <div class="ascension" class:ascension-locked={!ascendUnlocked}>
+    <div class="ascension-header">
+      <span class="section-label-inline mono">ASCENSION</span>
+      {#if !ascendUnlocked}<span class="lock">🔒</span>{/if}
+    </div>
+    {#if ascendUnlocked}
+      <button class="btn-ascend" class:btn-ascend-confirm={confirming} onclick={handleAscend}>
+        {#if confirming}Confirm — end this colony{:else}Ascend (+{pendingEvo} EVO){/if}
+      </button>
+      {#if confirming}
+        <button class="btn-cancel" onclick={() => (confirming = false)}>Cancel</button>
+      {/if}
+      <div class="ascension-note">Ends the run and banks its EVO.</div>
+    {:else}
+      <div class="ascension-note">Reach {popCap} ants to unlock.</div>
+    {/if}
+  </div>
 
   <!-- TODO(economy): locked scaffold — swap the placeholder rows for purchasable
        upgrades (spending EVO) once the economy update lands. -->
@@ -174,6 +213,68 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .ascension {
+    border: 1px solid #3b2a5e;
+    border-radius: 11px;
+    padding: 13px;
+    background: #14101d;
+  }
+
+  .ascension-locked {
+    border: 1px dashed #262c33;
+    background: #0d1015;
+    opacity: 0.75;
+  }
+
+  .ascension-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+  }
+
+  .btn-ascend {
+    width: 100%;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #c084fc, #6d28d9);
+    color: #120a1d;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .btn-ascend:hover {
+    filter: brightness(1.15);
+  }
+
+  .btn-ascend-confirm {
+    background: #ff6d6d;
+    color: #1d0a0a;
+  }
+
+  .btn-cancel {
+    width: 100%;
+    margin-top: 7px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 11.5px;
+    background: #14181e;
+    color: #9aa3ad;
+    border: 1px solid #232a31;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .ascension-note {
+    font-size: 10.5px;
+    color: #5c636c;
+    margin-top: 9px;
+    line-height: 1.5;
   }
 
   .upgrades {
