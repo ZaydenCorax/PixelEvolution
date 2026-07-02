@@ -10,6 +10,8 @@ import {
   ANT_POP_CAP,
   ANT_REPRODUCE_INTERVAL_TICKS,
   ANT_REPRODUCE_FOOD_COST,
+  ANT_REPRODUCE_FOOD_RESERVE,
+  EVO_FOOD_DIVISOR,
 } from './constants';
 
 export function createInitialState(): GameState {
@@ -19,12 +21,20 @@ export function createInitialState(): GameState {
   return {
     tick: 0,
     resources: { food: 0 },
+    stats: { lifetimeFoodBanked: 0 },
     world,
     ants,
     paused: false,
     gameOver: false,
     gameOverReason: undefined,
   };
+}
+
+// Evolution Points a run is worth so far. Sub-linear in lifetime banked food so
+// longer runs keep rewarding but early prestige resets stay viable. Earned when the
+// colony dies or the player Ascends (the store banks it; see gameStore.ts).
+export function calcEvoPoints(state: GameState): number {
+  return Math.floor(Math.sqrt(state.stats.lifetimeFoodBanked / EVO_FOOD_DIVISOR));
 }
 
 export function tick(state: GameState): void {
@@ -40,13 +50,17 @@ export function tick(state: GameState): void {
   if (state.tick % 10 === 0) {
     const foodProduced = collectFoodAtNest(state);
     state.resources.food += foodProduced;
+    // Lifetime counter only ever grows (spending doesn't touch it) — it is the
+    // basis of the run's EVO value (calcEvoPoints).
+    state.stats.lifetimeFoodBanked += foodProduced;
   }
 
-  // Reproduction (DESIGN.md §8.1): spend colony food to grow the population,
-  // one birth per interval so growth stays gradual.
+  // Reproduction (DESIGN.md §8.1): spend colony food to grow the population, one
+  // birth per interval so growth stays gradual. The reserve keeps refuel funds in
+  // the bank — reproduction never gets the colony's last food.
   if (
     state.tick % ANT_REPRODUCE_INTERVAL_TICKS === 0 &&
-    state.resources.food >= ANT_REPRODUCE_FOOD_COST &&
+    state.resources.food >= ANT_REPRODUCE_FOOD_COST + ANT_REPRODUCE_FOOD_RESERVE &&
     state.ants.count < ANT_POP_CAP &&
     spawnAnt(state.ants, state.world)
   ) {
@@ -86,6 +100,8 @@ export interface SimLoop {
   start(): void;
   stop(): void;
   step(): void;
+  /** Playback speed multiplier (1 = TICK_RATE_HZ, 2 = double, …). */
+  setSpeed(multiplier: number): void;
 }
 
 export function createSimLoop(onTick: () => void): SimLoop {
@@ -93,16 +109,18 @@ export function createSimLoop(onTick: () => void): SimLoop {
   let accumulator = 0;
   let running = false;
   let rafId = 0;
+  let speed = 1;
 
   function loop(timestamp: number): void {
     if (!running) return;
 
-    const delta = lastTime ? timestamp - lastTime : TICK_INTERVAL_MS;
+    const tickMs = TICK_INTERVAL_MS / speed;
+    // Seed the first frame with exactly one tick's worth of time so the sim
+    // starts immediately without bursting `speed` ticks at once.
+    const delta = lastTime ? timestamp - lastTime : tickMs;
     lastTime = timestamp;
 
     accumulator += delta;
-
-    const tickMs = TICK_INTERVAL_MS;
     // Drop any backlog beyond MAX_CATCHUP_TICKS so a long pause can't trigger a
     // burst of thousands of ticks in one frame (spiral of death, DESIGN.md §8.10).
     const maxAccumulated = tickMs * MAX_CATCHUP_TICKS;
@@ -132,6 +150,9 @@ export function createSimLoop(onTick: () => void): SimLoop {
     },
     step(): void {
       onTick();
+    },
+    setSpeed(multiplier: number): void {
+      speed = multiplier;
     },
   };
 }

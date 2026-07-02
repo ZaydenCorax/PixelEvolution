@@ -18,6 +18,8 @@ export default ts.config(
         HTMLCanvasElement: 'readonly',
         HTMLDivElement: 'readonly',
         HTMLImageElement: 'readonly',
+        HTMLInputElement: 'readonly',
+        KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
       }
     }

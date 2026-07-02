@@ -5,38 +5,55 @@ import { resetRandomSource, setRandomSource, createSeededRandom } from '../src/g
 import {
   ANT_STATE,
   TERRAIN,
-  ANT_POP_CAP,
+  ANT_ARRAY_CAPACITY,
   ANT_INITIAL_ENERGY,
   ANT_REFUEL_ENERGY_PER_FOOD,
   ANT_REFUEL_FOOD_COST,
   ANT_CARRY_CAPACITY,
+  RETREAT_ENERGY_BUFFER,
 } from '../src/game/constants';
+import type { World } from '../src/game/types';
 
 afterEach(() => {
   resetRandomSource();
 });
 
+// Reset every food cell (and its FOOD terrain tag). Movement tests need a bare grid:
+// stray cluster food would give the ant a target lock and change its choice.
+function clearFood(world: World): void {
+  world.food.fill(0);
+  for (let i = 0; i < world.terrain.length; i++) {
+    if (world.terrain[i] === TERRAIN.FOOD) world.terrain[i] = TERRAIN.EMPTY;
+  }
+}
+
+// A constant RNG above both ε thresholds: every move takes the argmax path (no
+// mutation), making movement assertions deterministic.
+const noMutation = () => 0.5;
+
 describe('createAnts / spawnAnt', () => {
-  it('allocates capacity to POP_CAP and starts every ant on a nest cell', () => {
+  it('allocates the hard ARRAY_CAPACITY and starts every ant on a nest cell', () => {
     const world = createWorld();
     const ants = createAnts(5, world);
     const { cx, cy } = nestCenter(world);
 
     expect(ants.count).toBe(5);
-    expect(ants.capacity).toBe(ANT_POP_CAP);
+    expect(ants.capacity).toBe(ANT_ARRAY_CAPACITY);
     for (let i = 0; i < ants.count; i++) {
       expect(Math.abs(ants.x[i] - cx)).toBeLessThanOrEqual(1);
       expect(Math.abs(ants.y[i] - cy)).toBeLessThanOrEqual(1);
       expect(ants.energy[i]).toBe(ANT_INITIAL_ENERGY);
+      expect(ants.targetX[i]).toBe(-1);
+      expect(ants.targetY[i]).toBe(-1);
     }
   });
 
-  it('spawnAnt appends until capacity, then refuses (§8.1)', () => {
+  it('spawnAnt appends until the array capacity, then refuses (§8.1)', () => {
     const world = createWorld();
-    const ants = createAnts(ANT_POP_CAP, world);
-    expect(ants.count).toBe(ANT_POP_CAP);
+    const ants = createAnts(ANT_ARRAY_CAPACITY, world);
+    expect(ants.count).toBe(ANT_ARRAY_CAPACITY);
     expect(spawnAnt(ants, world)).toBe(false);
-    expect(ants.count).toBe(ANT_POP_CAP);
+    expect(ants.count).toBe(ANT_ARRAY_CAPACITY);
   });
 });
 
@@ -92,14 +109,14 @@ describe('stepAnts', () => {
     expect(ants.state[0]).toBe(ANT_STATE.SEARCHING);
   });
 
-  it('does not recover a healthy (above 20%) ant on the nest — it forages instead', () => {
+  it('does not recover a healthy ant on the nest — it forages instead', () => {
     const world = createWorld();
     const ants = createAnts(1, world);
     const { cx, cy } = nestCenter(world);
     ants.x[0] = cx;
     ants.y[0] = cy;
     ants.state[0] = ANT_STATE.SEARCHING;
-    ants.energy[0] = 50; // above the 20% low-energy threshold → should not rest
+    ants.energy[0] = 50; // plenty to cover the walk home → should not rest
     const resources = { food: 50 };
 
     stepAnts(ants, world, resources, 0);
@@ -111,7 +128,7 @@ describe('stepAnts', () => {
 
   it('a carrying ant lays a food-trail breadcrumb along its route', () => {
     const world = createWorld();
-    world.food.fill(0); // no pickups: keep the ant CARRYING so it lays the food trail
+    clearFood(world); // no pickups: keep the ant CARRYING so it lays the food trail
     const ants = createAnts(1, world);
     ants.x[0] = 5;
     ants.y[0] = 5; // far from the nest, so it won't reach it in one step
@@ -126,7 +143,7 @@ describe('stepAnts', () => {
 
   it('a searching ant lays a home-trail breadcrumb along its route', () => {
     const world = createWorld();
-    world.food.fill(0); // no pickups: the ant stays SEARCHING and lays the home trail
+    clearFood(world); // no pickups: the ant stays SEARCHING and lays the home trail
     const ants = createAnts(1, world);
     ants.x[0] = 5;
     ants.y[0] = 5;
@@ -162,25 +179,15 @@ describe('stepAnts', () => {
 
   it('does not step back onto a cell already carrying the trail it is laying', () => {
     const world = createWorld();
+    clearFood(world); // no food targets: nothing but the pheromones may steer the choice
     const ants = createAnts(1, world);
     ants.x[0] = 5;
     ants.y[0] = 5;
     ants.state[0] = ANT_STATE.SEARCHING;
     ants.energy[0] = ANT_INITIAL_ENERGY;
 
-    // Clear the 4 neighbours to plain empty ground so nothing but the home pheromone
-    // differentiates them, then mark three with home pheromone; only West (4,5) is clear.
-    // A searching ant lays home, so it must avoid the marked cells and step onto (4,5).
-    for (const [nx, ny] of [
-      [5, 4],
-      [6, 5],
-      [5, 6],
-      [4, 5],
-    ]) {
-      const ni = getCellIndex(world, nx, ny);
-      world.terrain[ni] = TERRAIN.EMPTY;
-      world.food[ni] = 0;
-    }
+    // Mark three neighbours with home pheromone; only West (4,5) is clear. A searching
+    // ant lays home, so it must avoid the marked cells and step onto (4,5).
     world.pheromoneHome[getCellIndex(world, 5, 4)] = 0.5; // North
     world.pheromoneHome[getCellIndex(world, 6, 5)] = 0.5; // East
     world.pheromoneHome[getCellIndex(world, 5, 6)] = 0.5; // South
@@ -193,6 +200,7 @@ describe('stepAnts', () => {
 
   it('follows the goal trail through an overlap instead of avoiding it', () => {
     const world = createWorld();
+    clearFood(world);
     const ants = createAnts(1, world);
     ants.x[0] = 5;
     ants.y[0] = 5;
@@ -205,10 +213,7 @@ describe('stepAnts', () => {
       [5, 6],
       [4, 5],
     ]) {
-      const ni = getCellIndex(world, nx, ny);
-      world.terrain[ni] = TERRAIN.EMPTY;
-      world.food[ni] = 0;
-      world.pheromoneHome[ni] = 0.5; // its own laid-trail is everywhere → would avoid all
+      world.pheromoneHome[getCellIndex(world, nx, ny)] = 0.5; // own trail everywhere → would avoid all
     }
     // West also has the food (goal) trail: the overlap must win, so it heads West.
     world.pheromoneFood[getCellIndex(world, 4, 5)] = 0.6;
@@ -219,31 +224,77 @@ describe('stepAnts', () => {
     expect(ants.y[0]).toBe(5);
   });
 
-  it('a searching ant steers toward food it smells two cells away (food sensing)', () => {
-    // Seed the roulette so the strong (26:1) eastward bias resolves deterministically.
-    setRandomSource(createSeededRandom(2));
+  it('a searching ant locks onto smelled food and steps toward it (target lock)', () => {
     const world = createWorld();
-    world.food.fill(0);
-    for (let i = 0; i < world.terrain.length; i++) {
-      if (world.terrain[i] === TERRAIN.FOOD) world.terrain[i] = TERRAIN.EMPTY;
-    }
+    clearFood(world);
     const ants = createAnts(1, world);
+    setRandomSource(noMutation); // argmax path: the locked target decides the step
     ants.x[0] = 5;
     ants.y[0] = 5;
     ants.state[0] = ANT_STATE.SEARCHING;
     ants.energy[0] = ANT_INITIAL_ENERGY;
 
-    // Food two cells east — out of pickup range and off any trail, but inside the sensing
-    // footprint. The only step that reduces the distance to it is East, so the ant must
-    // pick East even though every direction is otherwise flat.
+    // Food two cells east — out of pickup range and off any trail, but inside the
+    // sensing footprint. The ant must lock it as its target and step East.
     const fidx = getCellIndex(world, 7, 5);
     world.terrain[fidx] = TERRAIN.FOOD;
     world.food[fidx] = 10;
 
     stepAnts(ants, world, { food: 0 }, 1);
 
+    expect(ants.targetX[0]).toBe(7);
+    expect(ants.targetY[0]).toBe(5);
     expect(ants.x[0]).toBe(6);
     expect(ants.y[0]).toBe(5);
+  });
+
+  it('a locked ant beelines to its target across ticks and collects it', () => {
+    const world = createWorld();
+    clearFood(world);
+    const ants = createAnts(1, world);
+    setRandomSource(noMutation);
+    ants.x[0] = 5;
+    ants.y[0] = 5;
+    ants.state[0] = ANT_STATE.SEARCHING;
+    ants.energy[0] = ANT_INITIAL_ENERGY;
+
+    const fidx = getCellIndex(world, 7, 5);
+    world.terrain[fidx] = TERRAIN.FOOD;
+    world.food[fidx] = 10;
+
+    // Two argmax steps: (5,5) → (6,5) → (7,5), where it picks up to carry capacity.
+    stepAnts(ants, world, { food: 0 }, 1);
+    stepAnts(ants, world, { food: 0 }, 3);
+
+    expect(ants.x[0]).toBe(7);
+    expect(ants.y[0]).toBe(5);
+    expect(ants.carried[0]).toBe(ANT_CARRY_CAPACITY);
+    expect(ants.state[0]).toBe(ANT_STATE.CARRYING);
+  });
+
+  it('a rare mutation roll makes the ant deviate from the locked path', () => {
+    const world = createWorld();
+    clearFood(world);
+    const ants = createAnts(1, world);
+    ants.x[0] = 5;
+    ants.y[0] = 5;
+    ants.dir[0] = 0; // North momentum, so East's pull comes only from the target
+    ants.state[0] = ANT_STATE.SEARCHING;
+    ants.energy[0] = ANT_INITIAL_ENERGY;
+
+    const fidx = getCellIndex(world, 7, 5);
+    world.terrain[fidx] = TERRAIN.FOOD;
+    world.food[fidx] = 10;
+
+    // First draw (ε roll) = 0 → mutation fires; second (roulette roll) lands near the
+    // end of the wheel, picking a low-weighted direction instead of the eastward best.
+    const draws = [0, 0.99];
+    let i = 0;
+    setRandomSource(() => (i < draws.length ? draws[i++] : 0.5));
+
+    stepAnts(ants, world, { food: 0 }, 1);
+
+    expect(ants.x[0]).not.toBe(6); // deviated: did not take the optimal eastward step
   });
 
   it('a searching ant avoids stepping onto a nest cell', () => {
@@ -355,5 +406,83 @@ describe('stepAnts', () => {
 
     expect(ants.count).toBe(1);
     expect(ants.state[0]).not.toBe(ANT_STATE.DEAD);
+  });
+
+  it('compaction preserves the surviving ant’s locked target', () => {
+    const world = createWorld();
+    clearFood(world);
+    const ants = createAnts(2, world);
+    setRandomSource(noMutation);
+    ants.energy[0] = 0; // dies and is compacted away
+    ants.x[1] = 5;
+    ants.y[1] = 5;
+    ants.state[1] = ANT_STATE.SEARCHING;
+    ants.energy[1] = ANT_INITIAL_ENERGY;
+
+    const fidx = getCellIndex(world, 7, 5);
+    world.terrain[fidx] = TERRAIN.FOOD;
+    world.food[fidx] = 10;
+
+    stepAnts(ants, world, { food: 0 }, 1);
+
+    // The survivor shifted down to slot 0 with its target intact.
+    expect(ants.count).toBe(1);
+    expect(ants.targetX[0]).toBe(7);
+    expect(ants.targetY[0]).toBe(5);
+  });
+
+  it('a homing ant beelines: no momentum overshoot, every argmax step heads nestward', () => {
+    const world = createWorld();
+    clearFood(world);
+    const ants = createAnts(1, world);
+    setRandomSource(noMutation);
+    const { cx, cy } = nestCenter(world);
+    ants.x[0] = 5;
+    ants.y[0] = 5;
+    ants.dir[0] = 3; // West — momentum would argue for walking AWAY from the nest
+    ants.state[0] = ANT_STATE.CARRYING;
+    ants.carried[0] = ANT_CARRY_CAPACITY;
+    ants.energy[0] = ANT_INITIAL_ENERGY;
+
+    let dist = Math.abs(5 - cx) + Math.abs(5 - cy);
+    for (let t = 1; t <= 5; t++) {
+      stepAnts(ants, world, { food: 0 }, t);
+      const now = Math.abs(ants.x[0] - cx) + Math.abs(ants.y[0] - cy);
+      expect(now).toBeLessThan(dist);
+      dist = now;
+    }
+  });
+
+  it('retreats when energy no longer covers the walk home plus the buffer', () => {
+    const world = createWorld();
+    clearFood(world); // no pickups: the ant must stay SEARCHING until the retreat check
+    const ants = createAnts(1, world);
+    ants.x[0] = 5;
+    ants.y[0] = 5; // Manhattan distance ~22 from the nest centre (16,16)
+    ants.state[0] = ANT_STATE.SEARCHING;
+    ants.energy[0] = 25; // after the move (24) it can no longer cover dist + buffer
+
+    stepAnts(ants, world, { food: 0 }, 1);
+
+    expect(ants.state[0]).toBe(ANT_STATE.RETURNING);
+  });
+
+  it('keeps foraging near the nest down to the buffer, then retreats', () => {
+    const world = createWorld();
+    clearFood(world);
+    const ants = createAnts(1, world);
+    const { cx, cy } = nestCenter(world);
+    ants.x[0] = cx + 2;
+    ants.y[0] = cy; // right beside the nest: retreat only when energy nears the buffer
+    ants.state[0] = ANT_STATE.SEARCHING;
+    ants.energy[0] = 50;
+
+    stepAnts(ants, world, { food: 0 }, 1);
+    expect(ants.state[0]).toBe(ANT_STATE.SEARCHING);
+
+    // Well under distance + buffer → must turn back now.
+    ants.energy[0] = RETREAT_ENERGY_BUFFER;
+    stepAnts(ants, world, { food: 0 }, 2);
+    expect(ants.state[0]).toBe(ANT_STATE.RETURNING);
   });
 });
