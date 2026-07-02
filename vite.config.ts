@@ -3,7 +3,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
   plugins: [svelte()],
-  base: '/PixelEvolution/',
+  base: process.env.NODE_ENV === 'production' ? '/PixelEvolution/' : '/',
   server: {
     open: true
   },

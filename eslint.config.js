@@ -13,6 +13,14 @@ export default ts.config(
       parserOptions: {
         parser: ts.parser,
         extraFileExtensions: ['.svelte']
+      },
+      globals: {
+        HTMLCanvasElement: 'readonly',
+        HTMLDivElement: 'readonly',
+        HTMLImageElement: 'readonly',
+        HTMLInputElement: 'readonly',
+        KeyboardEvent: 'readonly',
+        MouseEvent: 'readonly',
       }
     }
   },

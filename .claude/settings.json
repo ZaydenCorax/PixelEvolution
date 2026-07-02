@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash(npx eslint *)",
+      "PowerShell(npx vitest run 2>&1)",
+      "PowerShell(npx eslint src 2>&1)",
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(npx svelte-check --threshold error 2>&1)",
+      "Bash(npx playwright *)",
+      "Bash(npx vite *)",
+      "PowerShell(npm test 2>&1)",
+      "PowerShell(npm run lint 2>&1)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -Last 20; \"tsc exit: $LASTEXITCODE\")",
+      "PowerShell(npx svelte-check --version 2>&1)",
+      "PowerShell(npx svelte-check --tsconfig ./tsconfig.json 2>&1)",
+      "PowerShell(npx vite-node \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\simrun.ts\" 2>&1)",
+      "PowerShell(npx vite-node --root \"C:\\\\Users\\\\Dan\\\\repos\\\\PixelEvolution\" \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\simrun.ts\" 2>&1)",
+      "PowerShell(npx vite-node --root \"C:\\\\Users\\\\Dan\\\\repos\\\\PixelEvolution\" \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\trace.ts\" 2>&1)",
+      "PowerShell(npx vite-node --root \"C:\\\\Users\\\\Dan\\\\repos\\\\PixelEvolution\" \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\trace.ts\" 1037 2>&1)",
+      "PowerShell(npx vite-node --root \"C:\\\\Users\\\\Dan\\\\repos\\\\PixelEvolution\" \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\trace.ts\" 1074 2>&1)",
+      "PowerShell(npm run preview 2>&1)",
+      "PowerShell(node \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\smoke.mjs\" 2>&1)",
+      "PowerShell(npx vite-node --root \"C:\\\\Users\\\\Dan\\\\repos\\\\PixelEvolution\" \"C:\\\\Users\\\\Dan\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Dan-repos-PixelEvolution\\\\c88d80a4-d829-43a4-987a-08552598a4de\\\\scratchpad\\\\homing.ts\" 2>&1)"
+    ]
+  }
+}

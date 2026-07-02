@@ -1,9 +1,11 @@
-/* Global styles */
+/* Global styles — theme tokens from DESIGN_TEMPLATE.dc.html (1A "Instrument"). */
 :root {
-  --color-bg: #111;
-  --color-fg: #fff;
-  --color-primary: #00aaff;
-  --color-secondary: #ff6600;
+  --color-bg: #101216;
+  --color-fg: #e7ebf0;
+  --color-accent: #e0a13a;
+  --color-muted: #9aa3ad;
+  --font-ui: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 * {
@@ -15,4 +17,15 @@ body {
   padding: 0;
   background: var(--color-bg);
   color: var(--color-fg);
+  font-family: var(--font-ui);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #33383f;
+  border-radius: 4px;
 }
