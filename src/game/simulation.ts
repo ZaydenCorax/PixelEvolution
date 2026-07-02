@@ -86,6 +86,8 @@ export interface SimLoop {
   start(): void;
   stop(): void;
   step(): void;
+  /** Playback speed multiplier (1 = TICK_RATE_HZ, 2 = double, …). */
+  setSpeed(multiplier: number): void;
 }
 
 export function createSimLoop(onTick: () => void): SimLoop {
@@ -93,16 +95,18 @@ export function createSimLoop(onTick: () => void): SimLoop {
   let accumulator = 0;
   let running = false;
   let rafId = 0;
+  let speed = 1;
 
   function loop(timestamp: number): void {
     if (!running) return;
 
-    const delta = lastTime ? timestamp - lastTime : TICK_INTERVAL_MS;
+    const tickMs = TICK_INTERVAL_MS / speed;
+    // Seed the first frame with exactly one tick's worth of time so the sim
+    // starts immediately without bursting `speed` ticks at once.
+    const delta = lastTime ? timestamp - lastTime : tickMs;
     lastTime = timestamp;
 
     accumulator += delta;
-
-    const tickMs = TICK_INTERVAL_MS;
     // Drop any backlog beyond MAX_CATCHUP_TICKS so a long pause can't trigger a
     // burst of thousands of ticks in one frame (spiral of death, DESIGN.md §8.10).
     const maxAccumulated = tickMs * MAX_CATCHUP_TICKS;
@@ -132,6 +136,9 @@ export function createSimLoop(onTick: () => void): SimLoop {
     },
     step(): void {
       onTick();
+    },
+    setSpeed(multiplier: number): void {
+      speed = multiplier;
     },
   };
 }

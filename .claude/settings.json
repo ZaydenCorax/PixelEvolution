@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(npx vitest *)",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "PowerShell(npx vitest run 2>&1)",
+      "PowerShell(npx eslint src 2>&1)",
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(npx svelte-check --threshold error 2>&1)",
+      "Bash(npx playwright *)",
+      "Bash(npx vite *)"
     ]
   }
 }
